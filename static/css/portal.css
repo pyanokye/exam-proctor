@@ -310,6 +310,23 @@
     color: var(--color-text);
 }
 
+/* ── Awaiting-publish notice ──
+   Urgency is carried by the weight of the left rule, not by colour, so the
+   monochromatic type hierarchy holds (docs/PLAN.md § Typography). */
+.exam-publish-notice {
+    border-left: 3px solid var(--color-border);
+}
+
+.exam-publish-notice[data-urgency="soon"] {
+    border-left-color: var(--color-text-muted);
+}
+
+.exam-publish-notice[data-urgency="missed"],
+.exam-publish-notice[data-urgency="expired"] {
+    border-left-width: 5px;
+    border-left-color: var(--color-text);
+}
+
 /* ── Exam list items ── */
 .exam-item {
     display: grid;
@@ -2474,7 +2491,19 @@
     border: none;
     cursor: pointer;
     text-decoration: none;
-    transition: background 0.15s, opacity 0.15s;
+    transition: background 0.15s, opacity 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+
+.btn:disabled,
+.btn[aria-disabled="true"] {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+/* Keyboard users get the same affordance as the pointer hover states below. */
+.btn:focus-visible {
+    outline: 2px solid var(--color-text);
+    outline-offset: 2px;
 }
 
 .btn-primary {
@@ -2482,7 +2511,8 @@
     color: #fff;
 }
 
-.btn-primary:hover {
+.btn-primary:hover,
+.btn-primary:focus-visible {
     background: var(--color-primary-dark);
     color: #fff;
 }
@@ -2490,6 +2520,15 @@
 .btn-outline {
     background: transparent;
     border: 1px solid var(--color-border);
+    color: var(--color-text);
+}
+
+/* Outline buttons carry most of the portal chrome, so without a hover state
+   the whole UI reads as unclickable. */
+.btn-outline:hover:not(:disabled),
+.btn-outline:focus-visible {
+    background: var(--color-bg);
+    border-color: var(--color-text-muted);
     color: var(--color-text);
 }
 
@@ -3132,92 +3171,130 @@
 }
 
 /* ── Question builder (mockup) ── */
-.qb-mgmt-header {
-    background: var(--color-header);
-    color: #fff;
-    padding: 0.75rem 1.5rem;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    flex-wrap: wrap;
-}
-
-.qb-mgmt-tabs {
+/* Sub-navigation inside the shared portal shell. The section used to ship its
+   own brand header + tab bar, which made it the only part of the portal with a
+   different masthead and no logout button. */
+.qb-tabs {
     display: flex;
     gap: 0.25rem;
-    background: rgba(255,255,255,0.08);
+    flex-wrap: wrap;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
     padding: 0.25rem;
     border-radius: var(--radius-md);
+    margin-bottom: 1.25rem;
 }
 
-.qb-mgmt-tab {
+.qb-tab {
     padding: 0.45rem 1rem;
     font-size: 0.8rem;
     font-weight: 600;
-    color: rgba(255,255,255,0.75);
+    color: var(--color-text-muted);
     text-decoration: none;
     border-radius: var(--radius-sm);
+    transition: background 0.15s, color 0.15s;
 }
 
-.qb-mgmt-tab.active,
-.qb-mgmt-tab:hover {
-    background: rgba(255,255,255,0.15);
-    color: #fff;
-}
-
-.qb-subbar {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.75rem 1.5rem;
+.qb-tab:hover,
+.qb-tab:focus-visible {
     background: var(--color-surface);
-    border-bottom: 1px solid var(--color-border);
-    flex-wrap: wrap;
-    gap: 0.75rem;
+    color: var(--color-text);
 }
 
-.qb-breadcrumb {
-    font-size: 0.875rem;
-    color: var(--color-text-muted);
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    flex-wrap: wrap;
+.qb-tab.active {
+    background: var(--color-surface);
+    color: var(--color-text);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
 }
 
-.qb-breadcrumb a { color: var(--color-primary); text-decoration: none; }
+.qb-tab.is-disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    pointer-events: none;
+}
 
 .qb-layout {
     display: grid;
-    grid-template-columns: 280px 1fr;
-    min-height: calc(100vh - 120px);
+    grid-template-columns: 260px minmax(0, 1fr);
+    align-items: start;
+    gap: 1rem;
     background: var(--color-bg);
 }
 
 .qb-layout--three {
-    grid-template-columns: 280px 1fr 300px;
+    grid-template-columns: 260px minmax(0, 1fr) 280px;
 }
 
-.qb-page-main {
-    padding: 0 !important;
+/* Grid and flex children default to min-width:auto, so the editor column
+   refused to shrink below its content and the outer panels were clipped.
+   minmax(0, 1fr) above plus min-width:0 here lets it size down instead. */
+.qb-layout > * {
+    min-width: 0;
 }
 
 .qb-editor-form {
     display: contents;
 }
 
-.qb-mgmt-tab.is-disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-    pointer-events: none;
+.qb-library-title {
+    margin-top: 0.35rem;
+}
+
+.qb-import-layout,
+.qb-create-layout {
+    display: grid;
+    gap: 1.25rem;
+    align-items: start;
+}
+
+@media (min-width: 1100px) {
+    .qb-create-layout {
+        grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+    }
+}
+
+.qb-create-field {
+    margin-bottom: 1rem;
+}
+
+.qb-import-actions {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-top: 0.5rem;
+}
+
+.qb-import-layout input[type="file"] {
+    width: 100%;
+    font-size: 0.9rem;
+}
+
+/* Below three columns' worth of room, stack instead of squeezing the editor
+   into an unusable sliver. */
+@media (max-width: 1180px) {
+    .qb-layout,
+    .qb-layout--three {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .qb-outline,
+    .qb-meta-panel--standalone {
+        border-right: none;
+        border-left: none;
+        border-bottom: 1px solid var(--color-border);
+    }
 }
 
 .qb-outline {
     background: var(--color-surface);
-    border-right: 1px solid var(--color-border);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
     padding: 1rem;
-    overflow-y: auto;
+}
+
+.qb-add-question-btn {
+    width: 100%;
+    margin-top: 0.75rem;
 }
 
 .qb-outline-title {
@@ -3283,7 +3360,14 @@
     flex-shrink: 0;
 }
 
-.qb-outline-text { line-height: 1.35; color: var(--color-text-muted); }
+.qb-outline-text {
+    line-height: 1.35;
+    color: var(--color-text-muted);
+    min-width: 0;
+    /* Pasted questions often contain a single unbroken string (a URL, a long
+       formula); without this the outline column overflowed its pane. */
+    overflow-wrap: anywhere;
+}
 
 .qb-outline-stats {
     margin-top: 1.25rem;
@@ -3306,20 +3390,31 @@
 
 .qb-editor {
     background: var(--color-surface);
-    border-right: 1px solid var(--color-border);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
     display: flex;
     flex-direction: column;
-    min-height: 0;
-    overflow: hidden;
+    min-width: 0;
+    /* No overflow:hidden — the panes are cards in a scrolling page now, and
+       clipping here is what cut off the toolbar and footer. */
+    overflow: visible;
 }
 
 .qb-editor-toolbar {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 0.75rem;
+    /* Long section names used to push the Delete button out of the pane. */
+    flex-wrap: wrap;
     padding: 1rem 1.25rem;
     border-bottom: 1px solid var(--color-border);
     margin-bottom: 0;
+}
+
+.qb-editor-toolbar .question-type-badge {
+    white-space: normal;
+    overflow-wrap: anywhere;
 }
 
 .qb-editor-grid {
@@ -3338,9 +3433,23 @@
 
 .qb-meta-panel--standalone {
     background: var(--color-surface);
-    border-left: 1px solid var(--color-border);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
     padding: 1.25rem;
-    overflow-y: auto;
+    min-width: 0;
+}
+
+.qb-meta-submit {
+    width: 100%;
+    margin-top: 0.75rem;
+}
+
+.qb-answer-panels {
+    margin: 0.5rem 0 0;
+}
+
+.qb-answer-panel[hidden] {
+    display: none;
 }
 
 .qb-meta-panel--empty {
@@ -3350,7 +3459,7 @@
 .qb-editor-body {
     padding: 1.25rem;
     flex: 1;
-    overflow-y: auto;
+    min-width: 0;
 }
 
 .qb-editor-footer {
@@ -4503,6 +4612,299 @@
     justify-content: flex-end;
     gap: 0.5rem;
     margin-top: 0.35rem;
+}
+
+/* ── Exam results roster (teacher) ── */
+.results-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+    gap: 1rem;
+    margin-bottom: 0.5rem;
+}
+
+.results-summary > div {
+    display: grid;
+    gap: 0.2rem;
+}
+
+.results-summary-value {
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: var(--color-text);
+}
+
+.results-roster {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 0.6rem;
+}
+
+.results-row {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    text-align: left;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    padding: 0.85rem 1rem;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.results-row:hover,
+.results-row:focus-visible {
+    background: var(--color-surface);
+    border-color: var(--color-text-muted);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
+}
+
+.results-row:focus-visible {
+    outline: 2px solid var(--color-text);
+    outline-offset: 2px;
+}
+
+.results-row:active {
+    box-shadow: none;
+}
+
+.results-row:hover .results-row-cue,
+.results-row:focus-visible .results-row-cue {
+    color: var(--color-text);
+    text-decoration: underline;
+}
+
+.results-row-main {
+    display: grid;
+    gap: 0.2rem;
+    flex: 1 1 16rem;
+}
+
+.results-row-student {
+    font-weight: 700;
+    color: var(--color-text);
+}
+
+.results-row-meta {
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+}
+
+.results-row-score {
+    font-size: 1rem;
+    color: var(--color-text);
+    white-space: nowrap;
+}
+
+.results-row-score-max,
+.results-row-percent {
+    font-size: 0.82rem;
+    color: var(--color-text-muted);
+}
+
+.results-row-percent {
+    margin-left: 0.5rem;
+}
+
+.results-row-cue {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--color-text-muted);
+    white-space: nowrap;
+}
+
+/* ── Student responses modal ── */
+.portal-modal--wide {
+    width: min(760px, 94vw);
+    max-height: 88vh;
+}
+
+.attempt-responses-shell {
+    display: flex;
+    flex-direction: column;
+    max-height: 88vh;
+}
+
+.attempt-responses-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.1rem 1.4rem;
+    border-bottom: 1px solid var(--color-border);
+}
+
+/* htmx only toggles opacity on indicators, which would leave a blank gap above
+   the answers once loading finishes. Collapse it out of flow instead. */
+.attempt-responses-loading {
+    display: none;
+    margin: 0;
+    padding: 1.4rem;
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+}
+
+.attempt-responses-loading.htmx-request {
+    display: block;
+}
+
+.attempt-responses-body {
+    overflow-y: auto;
+    padding: 1.25rem 1.4rem 1.5rem;
+}
+
+.attempt-responses-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+}
+
+.attempt-responses-student {
+    margin: 0;
+    font-weight: 700;
+    font-size: 1rem;
+    color: var(--color-text);
+}
+
+.attempt-responses-meta {
+    margin: 0.2rem 0 0;
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+}
+
+.attempt-responses-score {
+    font-size: 1.05rem;
+    color: var(--color-text);
+    white-space: nowrap;
+}
+
+.attempt-responses-score-max,
+.attempt-responses-percent {
+    font-size: 0.82rem;
+    color: var(--color-text-muted);
+}
+
+.attempt-responses-percent {
+    margin-left: 0.5rem;
+}
+
+.attempt-responses-proctoring {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin: 0.75rem 0 0;
+    font-size: 0.82rem;
+    color: var(--color-text-muted);
+}
+
+.attempt-answer-list {
+    list-style: none;
+    margin: 1.1rem 0 0;
+    padding: 0;
+    display: grid;
+    gap: 0.85rem;
+    counter-reset: attempt-answer;
+}
+
+.attempt-answer {
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    padding: 0.85rem 1rem;
+    counter-increment: attempt-answer;
+}
+
+.attempt-answer-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.attempt-answer-marks {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--color-text-muted);
+}
+
+.attempt-answer-question {
+    margin: 0.5rem 0 0;
+    font-weight: 600;
+    color: var(--color-text);
+    line-height: 1.5;
+}
+
+.attempt-answer-question::before {
+    content: counter(attempt-answer) ". ";
+    color: var(--color-text-muted);
+    font-weight: 500;
+}
+
+.attempt-answer-options {
+    list-style: none;
+    margin: 0.65rem 0 0;
+    padding: 0;
+    display: grid;
+    gap: 0.35rem;
+}
+
+.attempt-answer-option {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    padding: 0.45rem 0.6rem;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    font-size: 0.9rem;
+    color: var(--color-text-muted);
+}
+
+/* Monochromatic emphasis: the graded options are the ones with a border and
+   full-strength text; everything else recedes. */
+.attempt-answer-option[data-correct="true"],
+.attempt-answer-option[data-selected="true"] {
+    border-color: var(--color-border);
+    background: var(--color-surface);
+    color: var(--color-text);
+}
+
+.attempt-answer-option[data-selected="true"] {
+    font-weight: 600;
+}
+
+.attempt-answer-option-key {
+    font-weight: 700;
+    min-width: 1.2rem;
+}
+
+.attempt-answer-option-label {
+    flex: 1;
+}
+
+.attempt-answer-option-tag {
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+    white-space: nowrap;
+}
+
+.attempt-answer-note {
+    margin: 0.55rem 0 0;
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
 }
 
 /* ── Error / empty state pages (404, 403, 500) ─────────────────────────── */

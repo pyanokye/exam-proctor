@@ -340,6 +340,19 @@ flowchart TD
 
 **Publish gate:** `Exam.is_published` may only be set when `approval_status = approved` and at least one `ExamQuestion` exists.
 
+**Why publication is separate from approval.** The availability window already
+stops students entering early, so publication is not an access control. It exists
+to keep responsibility unambiguous (the teacher who owns the content owns the
+go-live), to give the teacher a last-mile abort without another admin round-trip,
+and to re-validate the schedule at go-live since approval may be days old.
+
+Its failure mode is a teacher who forgets: an approved, unpublished exam would
+quietly never open. `Exam.publish_urgency()` classifies that state as `later`,
+`soon` (window within `PUBLISH_SOON_HOURS`), `missed` (window already open) or
+`expired` (window closed unpublished — the schedule must be reset and reapproved).
+It is surfaced on the teacher dashboard, in the exam list, on the exam detail page
+and as a sidebar badge (`awaiting_publish`).
+
 **Availability gate:** `Exam.is_available()` returns false when:
 - not published, or
 - not approved, or
@@ -395,6 +408,9 @@ Implementation: `apps/exams/services/exam_control.py` (`freeze_exam`, `unfreeze_
 | Freeze / unfreeze exam | No | Yes |
 | Add time to exam | No | Yes |
 | View all exams / banks | Own only | All |
+| View results roster / student responses | Author or course owner | **No** |
+| Grade short answers | Author or course owner | **No** |
+| Review flagged proctoring sessions | Author or course owner | Read-only audit |
 
 ### CSV import format
 
@@ -414,6 +430,26 @@ Optional: `option_a` … `option_f`, `explanation`.
 - Teachers may only manage banks and exams for **their own courses**.
 - Admins may manage all courses, banks, and exams.
 - Questions can only be added to an exam if they belong to a bank for **the same course** as the exam.
+
+#### Student work is teacher-only
+
+Marks, answers and per-attempt proctoring evidence follow a **narrower** rule
+than exam management, enforced by `user_can_view_attempts` in
+`apps/exams/permissions.py`:
+
+- The exam's **author** (`Exam.created_by`) may view it.
+- The **course owner** may view it. Normally the same person, since `ExamForm`
+  only offers a teacher their own courses; the two diverge for admin-authored
+  exams and for reassigned courses, and either alone would strand someone.
+- **Admins are refused**, including superusers. Administering the platform is
+  not a reason to read a named student's answers. Admins keep exam approval,
+  aggregate dashboard statistics, and the read-only proctoring audit — none of
+  which expose answers or per-student marks.
+
+This covers the results roster, the responses modal, the single result page,
+pending reviews, manual grading, violation review, attempt invalidation, and
+the proctoring WebSocket. Attempt-scoped views re-derive the exam from the
+attempt before checking, so a guessed `attempt_id` cannot cross courses.
 
 ### UI routes (session auth)
 
@@ -438,6 +474,7 @@ Optional: `option_a` … `option_f`, `explanation`.
 | GET | `/exams/{id}/preview/` | Preview with answers |
 | POST | `/exams/{id}/submit-approval/` | Submit for admin approval |
 | POST | `/exams/{id}/publish/` | Publish (requires approval) |
+| POST | `/exams/{id}/delete/` | Delete exam (blocked if any student attempts exist) |
 
 #### Admin — exam oversight
 
@@ -470,6 +507,7 @@ Base: `/api/v1/` for JSON (proctor JS). Most pages are server-rendered with sess
 | GET | `/exams/{id}/preview/` | Teacher | Teacher preview |
 | POST | `/exams/{id}/submit-approval/` | Teacher | Submit for admin approval |
 | POST | `/exams/{id}/publish/` | Teacher | Requires `approval_status = approved` |
+| POST | `/exams/{id}/delete/` | Teacher / Admin | Course owner or admin; blocked when attempts exist |
 | GET | `/exams/admin/pending/` | Admin | Pending exam queue |
 | GET/POST | `/exams/admin/{id}/review/` | Admin | Approve/reject/freeze/add time |
 | POST | `/exams/redeem-code/` | Student | Redeem access code |
@@ -500,6 +538,22 @@ Django view validates and enqueues Celery task, returns immediately. Worker runs
 **ID verification worker** (queue: `id_verification`, concurrency=1):
 1. ID card CNN (confidence >= 0.85)
 2. Face match vs registration face-scan embedding (InsightFace `buffalo_l` ArcFace, cosine similarity >= 0.35, `ml/face_id`)
+
+Each round returns one of four outcomes (`ml/id_verification/exam_verify.py`), and
+only the first two are identity decisions:
+
+| Outcome | Meaning | Effect |
+|---------|---------|--------|
+| `match` | Face matches the reference | Admitted, attempt goes `IN_PROGRESS` |
+| `no_match` | Face compared and rejected | Counts toward `MAX_ID_VERIFICATION_ATTEMPTS`; exhausting them terminates the attempt |
+| `no_face` | No face readable in the webcam frame | Retried (client auto-retries, then offers a button); never admits, never terminates |
+| `unavailable` | No comparison possible — reference face or model missing | Retried; after `MAX_ID_VERIFICATION_FAULTS` the student is admitted with `id_verification_status = unverified` and the session is flagged for review |
+
+The reference face is read from `StudentProfile.face_embedding`, falling back to
+the registration photo on the `User` (so a deleted profile row degrades to "cannot
+verify", not to a false identity failure). `manage.py repair_student_profiles`
+rebuilds missing profiles and embeddings. Set `PROCTORING_ADMIT_WHEN_UNVERIFIABLE=false`
+to keep unverifiable students retrying instead of admitting them.
 
 **Local CPU tuning**: YOLOv5n, 3–4s frame interval, Celery concurrency=1, ~5–10 concurrent exams.
 

@@ -33,6 +33,25 @@ Environment variables:
 | `PROCTORING_USE_MOCK_ML` | `false` | `true` skips Torch/Ultralytics (dev without ML deps) |
 | `PROCTORING_YOLO_WEIGHTS` | `yolov5n.pt` | Object detection weights |
 | `PROCTORING_POSE_WEIGHTS` | `yolov8n-pose.pt` | Pose model weights |
+| `PROCTORING_MAX_ID_VERIFICATION_FAULTS` | `3` | Rounds where no face comparison was possible before the student is admitted and flagged |
+| `PROCTORING_ADMIT_WHEN_UNVERIFIABLE` | `true` | `false` keeps unverifiable students retrying instead of admitting them |
+
+`manage.py runserver` serves WebSockets because `daphne` is installed and listed
+first in `INSTALLED_APPS`; without it Django runs WSGI only and every `/ws/`
+request 404s.
+
+### Identity check troubleshooting
+
+If the pre-exam check reports that a face cannot be matched, confirm the student
+still has a profile with a reference face:
+
+```bash
+python manage.py repair_student_profiles --dry-run
+python manage.py repair_student_profiles --user <username> --student-id <id>
+```
+
+The registration scan is stored on the user, so a profile deleted in Django admin
+can be rebuilt from it.
 
 ### Start Redis-backed worker
 

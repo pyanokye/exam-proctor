@@ -56,6 +56,29 @@
 
     document.body.addEventListener("htmx:pushedIntoHistory", syncFromMain);
 
+    // ── Auth-page swap guard ────────────────────────────────────────────────
+    // XHR follows redirects transparently, so an expired session can hand HTMX
+    // the login document. Rendering that inside #portal-main would leave a
+    // sign-in card next to a stale portal shell, so navigate for real instead.
+    // The server sends HX-Redirect for this case; this covers responses that
+    // reach the browser some other way (proxies, cached pages).
+    const AUTH_PATH_PREFIXES = ["/login/", "/register/", "/logout/", "/pending-approval/", "/id-review/"];
+
+    document.body.addEventListener("htmx:beforeSwap", (event) => {
+        const finalUrl = event.detail.xhr && event.detail.xhr.responseURL;
+        if (!finalUrl) return;
+        let target;
+        try {
+            target = new URL(finalUrl, window.location.href);
+        } catch (err) {
+            return;
+        }
+        if (target.origin !== window.location.origin) return;
+        if (!AUTH_PATH_PREFIXES.some((prefix) => target.pathname.startsWith(prefix))) return;
+        event.detail.shouldSwap = false;
+        window.location.href = target.href;
+    });
+
     // ── HTMX failure fallback ───────────────────────────────────────────────
     // Without these, a failed tab-load leaves the previous page in #portal-main
     // with no feedback. Fall back to a full navigation so the browser shows
@@ -91,6 +114,43 @@
             pushUrl: true,
             indicator: "#portal-loading",
         });
+    });
+
+    // ── Student-responses modal (teacher exam results) ──────────────────────
+    // Delegated from body so it survives HTMX swaps and history restores, where
+    // an inline <script> in the swapped markup would not run again.
+    function responsesDialog() {
+        const dialog = document.getElementById("attempt-responses-dialog");
+        return dialog && typeof dialog.showModal === "function" ? dialog : null;
+    }
+
+    document.body.addEventListener("click", (event) => {
+        const dialog = responsesDialog();
+        if (!dialog) return;
+
+        if (event.target.closest("[data-attempt-close]")) {
+            // Swallow the click. Once close() pulls the dialog out of the top
+            // layer, anything still travelling with this event can land on the
+            // roster row underneath and re-open the modal.
+            event.preventDefault();
+            event.stopPropagation();
+            dialog.close();
+            return;
+        }
+
+        // A click on the backdrop reports the dialog itself as the target.
+        if (event.target === dialog) {
+            dialog.close();
+            return;
+        }
+        // Anything else inside the open modal is content, not a trigger.
+        if (dialog.contains(event.target)) return;
+
+        if (!event.target.closest("[data-attempt-open]") || dialog.open) return;
+        const body = document.getElementById("attempt-responses-body");
+        // Clear first so the previous student never shows while the next loads.
+        if (body) body.innerHTML = "";
+        dialog.showModal();
     });
 
     // ── Audit-list row clicks ────────────────────────────────────────────────

@@ -6,6 +6,28 @@
     </div>
 </div>
 
+{% if awaiting_publish_exams %}
+<div class="portal-card">
+    <h3 class="portal-card-title portal-card-title--icon">{% include "includes/icon.html" with name="warning" size="sm" only %} Approved — waiting on you to publish</h3>
+    <p class="admin-empty" style="margin-top:0;">An approved exam stays invisible to students until you publish it. Publishing does not open it early; the schedule still controls access.</p>
+    {% for e in awaiting_publish_exams %}
+    <div class="portal-notice-card portal-notice-card--compact exam-publish-notice" data-urgency="{{ e.publish_urgency }}" role="status">
+        {% include "includes/icon.html" with name="clipboard" size="sm" only %}
+        <div class="portal-notice-content">
+            <strong class="portal-notice-title">{{ e.title }} · {{ e.course.code }}</strong>
+            <p class="portal-notice-body">
+                {{ e.publish_urgency_label }}.
+                {% if e.available_from %}Window {{ e.available_from }} → {{ e.available_until }}.{% else %}No schedule set yet.{% endif %}
+            </p>
+        </div>
+        <form method="post" action="{% url 'exams:publish' e.pk %}" style="align-self:center;">{% csrf_token %}
+            <button type="submit" class="btn btn-primary btn-sm">Publish</button>
+        </form>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
 <div class="stats-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1rem;margin-bottom:1.5rem;">
     <div class="portal-card" style="margin:0;text-align:center;">
         <div style="font-size:0.8rem;color:var(--color-text-muted);">Total Exams</div>

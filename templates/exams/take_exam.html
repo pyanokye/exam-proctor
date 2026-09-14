@@ -161,6 +161,17 @@
         </div>
     </div>
 
+    <!-- Second-display overlay. Shown while an extended external display
+         (e.g. HDMI monitor) is connected mid-exam; clears automatically when
+         it is disconnected. Reuses the end-overlay styling. -->
+    <div id="exam-display-overlay" class="exam-end-overlay" role="dialog" aria-labelledby="exam-display-title" aria-modal="true" hidden>
+        <div class="exam-end-card">
+            <h1 id="exam-display-title" class="exam-end-title">Second display detected</h1>
+            <p class="exam-end-reason">Disconnect your monitor before continuing.</p>
+            <p class="exam-end-note">The exam resumes automatically once the display is disconnected.</p>
+        </div>
+    </div>
+
     <div id="exam-panel">
         <div class="exam-lockdown-bar">
             <div class="exam-lockdown-left">
@@ -309,7 +320,7 @@
     const TOTAL_QUESTIONS = {{ total_questions|default:1 }};
 </script>
 <script src="{% static 'js/strike_alerts.js' %}?v=3"></script>
-<script src="{% static 'js/proctor.js' %}?v=3"></script>
-<script src="{% static 'js/lockdown.js' %}?v=4"></script>
+<script src="{% static 'js/proctor.js' %}?v=5"></script>
+<script src="{% static 'js/lockdown.js' %}?v=5"></script>
 <script src="{% static 'js/exam-nav.js' %}?v=3"></script>
 {% endblock %}

@@ -7,6 +7,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.exams.models import Exam, ExamAttempt, grade_attempt
+from apps.exams.permissions import user_can_view_attempts
 
 from .models import ProctoringSession, ViolationLog
 
@@ -220,14 +221,13 @@ class ReviewPermissionError(Exception):
 
 
 def _teacher_owns_attempt(user, attempt) -> bool:
-    """A teacher can audit attempts only on courses they teach.
+    """A teacher can audit only attempts on exams they authored or own.
 
     Admins are deliberately excluded — flagged-session review is a teacher
-    responsibility per the system design.
+    responsibility per the system design. Shares one rule with the exam
+    results roster so the two can't drift apart.
     """
-    if not user.is_teacher_user:
-        return False
-    return attempt.exam.course.teacher.user_id == user.id
+    return user_can_view_attempts(user, attempt.exam)
 
 
 def apply_violation_review(

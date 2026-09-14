@@ -14,6 +14,13 @@
                 <a href="{% url 'exams:exam_questions' exam.pk %}" class="btn btn-primary btn-sm">Manage Questions</a>
                 <a href="{% url 'exams:edit' exam.pk %}" class="btn btn-outline btn-sm">Edit Schedule</a>
                 <a href="{% url 'exams:exam_preview' exam.pk %}" class="btn btn-outline btn-sm">Preview</a>
+                <form method="post"
+                      action="{% url 'exams:delete' exam.pk %}"
+                      class="admin-inline-form"
+                      onsubmit="return confirm('Delete “{{ exam.title|escapejs }}”? This cannot be undone.');">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-danger-outline btn-sm">Delete</button>
+                </form>
             </div>
         </div>
 
@@ -33,6 +40,18 @@
                 <div><span class="detail-label">Student access</span><span>{{ exam.availability_state_label }}</span></div>
             </div>
             {% if exam.description %}<p style="margin:1rem 0 0;font-size:0.875rem;color:var(--color-text-muted);">{{ exam.description }}</p>{% endif %}
+
+            {% with urgency=exam.publish_urgency %}
+            {% if urgency %}
+            <div class="portal-notice-card portal-notice-card--compact exam-publish-notice" data-urgency="{{ urgency }}" role="status">
+                {% include "includes/icon.html" with name="warning" size="sm" only %}
+                <div class="portal-notice-content">
+                    <strong class="portal-notice-title">{{ exam.publish_urgency_label }}</strong>
+                    <p class="portal-notice-body">An administrator has approved this exam, but students cannot see it until it is published. Publishing does not open it early — the schedule above still controls when students can start.</p>
+                </div>
+            </div>
+            {% endif %}
+            {% endwith %}
 
             <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:1.25rem;">
                 {% if user.is_teacher_user %}
@@ -57,7 +76,10 @@
                 {% endif %}
                 {% if exam.rejection_reason %}<p class="field-error">Rejected: {{ exam.rejection_reason }}</p>{% endif %}
                 <a href="{% url 'exams:generate_code' exam.pk %}" class="btn btn-outline btn-sm">Generate Access Code</a>
+                {% if not user.is_admin_user %}
+                <a href="{% url 'exams:exam_results' exam.pk %}" class="btn btn-outline btn-sm">View Results</a>
                 <a href="{% url 'exams:pending_reviews' exam.pk %}" class="btn btn-outline btn-sm">Pending Reviews</a>
+                {% endif %}
             </div>
         </div>
 

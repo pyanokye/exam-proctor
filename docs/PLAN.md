@@ -51,6 +51,8 @@ Urgency comes from **layout, weight, and icon** — not from colored type. Reser
 - Sidebar: `templates/includes/portal_sidebar.html`
 - Tab content: `templates/partials/portal/` via `render_portal()` in `apps/accounts/portal.py`
 - See `.cursor/rules/confirm-todo-list.mdc` for tab-navigation workflow
+- Auth pages (login, register, pending-approval, ID review) render their own document and must never be swapped into `#portal-main`. `HtmxAuthRedirectMiddleware` answers HTMX requests bounced to those pages with `HX-Redirect` so the browser navigates fully; `portal.js` refuses the swap as a fallback.
+- `render_portal()` sends `no-store`, and `CSRF_FAILURE_VIEW` (`accounts.views.csrf_failure`) redirects stale-token POSTs to login / the dashboard / the form instead of Django's 403 page. Both exist because a portal page left open across a logout keeps a CSRF token that has since rotated.
 
 ---
 

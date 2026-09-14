@@ -5,6 +5,7 @@ from channels.generic.websocket import AsyncJsonWebsocketConsumer
 from django.utils import timezone
 
 from apps.exams.models import ExamAttempt
+from apps.exams.permissions import user_can_view_attempts
 
 
 class ProctoringConsumer(AsyncJsonWebsocketConsumer):
@@ -24,15 +25,16 @@ class ProctoringConsumer(AsyncJsonWebsocketConsumer):
             await self.close(code=4401)
             return
 
-        # Ownership check: the connected user must own this attempt, or be admin /
-        # the teacher of the exam's course (e.g. a proctor watching the session).
+        # Ownership check: the connected user must be the student sitting this
+        # attempt, or the teacher who authored/owns the exam (a proctor watching
+        # the session). Admins are excluded — live frames are student work.
         allowed = await self._user_can_view_attempt(user)
         if not allowed:
             await self.close(code=4403)
             return
 
         # Students may only hold a socket while the attempt is still live.
-        # Teachers/admins may observe ended sessions for audit.
+        # Teachers may observe ended sessions for audit.
         self.is_student = bool(getattr(user, "is_student_user", False))
         if self.is_student:
             live = await self._attempt_is_live()
@@ -60,13 +62,9 @@ class ProctoringConsumer(AsyncJsonWebsocketConsumer):
             ).get(pk=self.attempt_id)
         except ExamAttempt.DoesNotExist:
             return False
-        if getattr(user, "is_admin_user", False) or user.is_superuser:
-            return True
         if getattr(user, "is_student_user", False):
             return attempt.student_id == user.id
-        if getattr(user, "is_teacher_user", False):
-            return attempt.exam.course.teacher.user_id == user.id
-        return False
+        return user_can_view_attempts(user, attempt.exam)
 
     @database_sync_to_async
     def _attempt_is_live(self):

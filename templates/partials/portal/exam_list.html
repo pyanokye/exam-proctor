@@ -7,18 +7,40 @@
     <a href="{% url 'exams:create' %}" class="btn btn-primary btn-sm" data-portal-full>+ Create Exam</a>
 </div>
 
+{% if messages %}
+<ul class="messages">{% for message in messages %}<li class="{{ message.tags }}">{{ message }}</li>{% endfor %}</ul>
+{% endif %}
+
 {% for e in exams %}
 <div class="portal-card faculty-list-card">
     <div class="faculty-list-row">
         <div>
             <div class="faculty-list-title">{{ e.title }}</div>
-            <div class="faculty-list-meta">{{ e.course.code }} · {% if e.is_published %}Published{% else %}Draft{% endif %} · {{ e.duration_minutes }} min · {{ e.exam_questions.count }} Q</div>
+            <div class="faculty-list-meta">{{ e.course.code }} · {% if e.is_published %}Published{% elif e.awaits_publish %}<strong>Approved — not published</strong>{% else %}Draft{% endif %} · {{ e.duration_minutes }} min · {{ e.exam_questions.count }} Q</div>
         </div>
         <div class="faculty-list-actions">
             <a href="{% url 'exams:exam_questions' e.pk %}" class="btn btn-outline btn-sm" data-portal-full>Questions</a>
+            {% if not user.is_admin_user %}<a href="{% url 'exams:exam_results' e.pk %}" class="btn btn-outline btn-sm" data-portal-full>Results</a>{% endif %}
             <a href="{% url 'exams:detail' e.pk %}" class="btn btn-primary btn-sm" data-portal-full>Manage</a>
+            <form method="post"
+                  action="{% url 'exams:delete' e.pk %}"
+                  class="admin-inline-form"
+                  onsubmit="return confirm('Delete “{{ e.title|escapejs }}”? This cannot be undone.');">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-danger-outline btn-sm">Delete</button>
+            </form>
         </div>
     </div>
+    {% with urgency=e.publish_urgency %}
+    {% if urgency %}
+    <div class="portal-notice-card portal-notice-card--compact exam-publish-notice" data-urgency="{{ urgency }}" role="status">
+        {% include "includes/icon.html" with name="warning" size="sm" only %}
+        <div class="portal-notice-content">
+            <p class="portal-notice-body"><strong>{{ e.publish_urgency_label }}.</strong> Students cannot see this exam until it is published.</p>
+        </div>
+    </div>
+    {% endif %}
+    {% endwith %}
 </div>
 {% empty %}
 <div class="portal-card"><p class="admin-empty">No exams yet.</p></div>

@@ -1,0 +1,102 @@
+<div class="attempt-responses">
+    <header class="attempt-responses-head">
+        <div>
+            <p class="attempt-responses-student">{{ attempt.student.get_full_name|default:attempt.student.username }}</p>
+            <p class="attempt-responses-meta">
+                Attempt #{{ attempt.attempt_number }} · {{ attempt.get_status_display }}
+                {% if attempt.ended_at %} · submitted {{ attempt.ended_at|date:"M j, Y · H:i" }}{% endif %}
+            </p>
+        </div>
+        <div class="attempt-responses-score">
+            {% if result %}
+            <strong>{{ result.total_score|floatformat:"-2" }}</strong><span class="attempt-responses-score-max"> / {{ result.max_score|floatformat:"-2" }}</span>
+            {% if attempt.percentage is not None %}<span class="attempt-responses-percent">{{ attempt.percentage|floatformat:1 }}%</span>{% endif %}
+            {% else %}
+            <span class="attempt-responses-score-max">Not graded</span>
+            {% endif %}
+        </div>
+    </header>
+
+    {% if attempt.is_invalidated %}
+    <div class="portal-notice-card portal-notice-card--compact" role="status">
+        {% include "includes/icon.html" with name="warning" size="sm" only %}
+        <div class="portal-notice-content">
+            <strong class="portal-notice-title">Attempt invalidated — score forced to 0</strong>
+            {% if attempt.invalidation_reason %}<p class="portal-notice-body">{{ attempt.invalidation_reason }}</p>{% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if attempt.grading_status == 'pending_manual' %}
+    <div class="portal-notice-card portal-notice-card--compact" role="status">
+        {% include "includes/icon.html" with name="clipboard" size="sm" only %}
+        <div class="portal-notice-content">
+            <strong class="portal-notice-title">Provisional score</strong>
+            <p class="portal-notice-body">Short answers below are still awaiting a manual grade.</p>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if proctoring %}
+    <p class="attempt-responses-proctoring">
+        {% include "includes/icon.html" with name="shield" size="sm" only %}
+        Proctoring: {{ proctoring.strike_count }} strike{{ proctoring.strike_count|pluralize }} ·
+        {{ proctoring.violation_count }} violation{{ proctoring.violation_count|pluralize }} ·
+        ID check {{ proctoring.id_status|lower }}
+    </p>
+    {% endif %}
+
+    <ol class="attempt-answer-list">
+        {% for row in rows %}
+        <li class="attempt-answer">
+            <div class="attempt-answer-head">
+                <span class="question-type-badge">{{ row.question.get_question_type_display }}</span>
+                <span class="attempt-answer-marks">
+                    {% if row.answer and row.answer.marks_awarded is not None %}
+                        {{ row.answer.marks_awarded|floatformat:"-2" }} / {{ row.max_marks }} marks
+                    {% else %}
+                        — / {{ row.max_marks }} marks
+                    {% endif %}
+                </span>
+            </div>
+            <p class="attempt-answer-question">{{ row.question.text }}</p>
+
+            {% if row.options %}
+            <ul class="attempt-answer-options">
+                {% for opt in row.options %}
+                <li class="attempt-answer-option"
+                    {% if opt.is_selected %}data-selected="true"{% endif %}
+                    {% if opt.is_correct %}data-correct="true"{% endif %}>
+                    <span class="attempt-answer-option-key">{{ opt.key|upper }}</span>
+                    <span class="attempt-answer-option-label">{{ opt.label }}</span>
+                    <span class="attempt-answer-option-tag">
+                        {% if opt.is_selected and opt.is_correct %}Chosen · correct answer
+                        {% elif opt.is_selected %}Chosen
+                        {% elif opt.is_correct %}Correct answer
+                        {% endif %}
+                    </span>
+                </li>
+                {% endfor %}
+            </ul>
+            {% elif row.text_answer %}
+            <div class="grade-card-body grade-card-body--quoted">{{ row.text_answer|linebreaksbr }}</div>
+            {% endif %}
+
+            {% if not row.answered %}
+            <p class="attempt-answer-note">No response recorded.</p>
+            {% endif %}
+
+            {% if row.answer and row.answer.review_status == 'pending_review' %}
+            <p class="attempt-answer-note">
+                Awaiting manual grade ·
+                <a href="{% url 'exams:grade_answer' row.answer.pk %}">Grade this answer</a>
+            </p>
+            {% elif row.answer and row.answer.review_status == 'manually_graded' %}
+            <p class="attempt-answer-note">Manually graded{% if row.answer.manual_grade.feedback %} · “{{ row.answer.manual_grade.feedback }}”{% endif %}</p>
+            {% endif %}
+        </li>
+        {% empty %}
+        <li class="attempt-answer"><p class="attempt-answer-note">This exam has no questions attached.</p></li>
+        {% endfor %}
+    </ol>
+</div>

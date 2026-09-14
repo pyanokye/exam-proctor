@@ -1,61 +1,47 @@
-{% extends "base.html" %}
+{% extends "layouts/portal.html" %}
 {% block title %}Bulk Import — {{ bank.title }}{% endblock %}
-{% block body %}
-{% include "includes/question_bank_header.html" %}
+{% block portal_content %}
+<div class="portal-page" data-portal-nav="banks" data-portal-title="Bulk Import">
 
-<div class="portal-layout qb-page">
-    {% include "includes/portal_sidebar.html" %}
-    <div class="portal-main qb-page-main">
-
-<div class="qb-subbar">
-    <div class="qb-breadcrumb">
-        <a href="{% url 'exams:question_banks' %}">{{ bank.course.code }}</a>
-        <span>›</span>
-        <a href="{% url 'exams:question_bank_builder' bank.pk %}">{{ bank.title }}</a>
-        <span>›</span>
-        <strong>Bulk Import</strong>
-    </div>
-    <a href="{% url 'exams:question_bank_builder' bank.pk %}" class="btn btn-outline btn-xs">← Builder</a>
-</div>
-
-<div class="qb-import-layout">
-    <div class="qb-import-upload">
-        <div class="faculty-page-header">
-            <div>
-                <h2 class="faculty-page-title">Upload CSV</h2>
-                <p class="faculty-page-sub">{{ bank.title }} · {{ bank.course.code }}</p>
-            </div>
+    <header class="exam-page-head">
+        <div>
+            <p class="exam-page-eyebrow">Question bank</p>
+            <h1 class="admin-page-title">{{ bank.title }}</h1>
+            <p class="exam-page-subtitle">
+                <a href="{% url 'exams:question_banks' %}">{{ bank.course.code }}</a>
+                · add many questions at once from a CSV file
+            </p>
         </div>
+        <div class="faculty-list-actions">
+            <a href="{% url 'exams:question_bank_builder' bank.pk %}" class="btn btn-outline btn-sm">← Builder</a>
+        </div>
+    </header>
 
-        {% if messages %}
-        <ul class="messages">{% for message in messages %}<li class="{{ message.tags }}">{{ message }}</li>{% endfor %}</ul>
-        {% endif %}
+    {% include "includes/question_bank_tabs.html" %}
 
-        <div class="portal-card faculty-form-card">
+    {% if messages %}
+    <ul class="messages">{% for message in messages %}<li class="{{ message.tags }}">{{ message }}</li>{% endfor %}</ul>
+    {% endif %}
+
+    <div class="qb-import-layout">
+        <section class="portal-card faculty-form-card">
+            <h2 class="portal-card-title">Upload CSV</h2>
             <form method="post" enctype="multipart/form-data">
                 {% csrf_token %}
                 <div class="form-group">
-                    <label class="qb-label">{{ form.csv_file.label }} *</label>
+                    <label class="qb-label" for="{{ form.csv_file.id_for_label }}">{{ form.csv_file.label }} *</label>
                     {{ form.csv_file }}
                     <small class="field-help">{{ form.csv_file.help_text }}</small>
+                    {% for error in form.csv_file.errors %}<div class="field-error">{{ error }}</div>{% endfor %}
                 </div>
                 <div class="qb-import-actions">
                     <button type="submit" class="btn btn-primary">Import Questions</button>
                     <a href="{% url 'exams:question_import_sample' %}" class="btn btn-outline">Download sample CSV</a>
                 </div>
             </form>
-        </div>
-    </div>
+        </section>
 
-    {% include "includes/question_csv_format_guide.html" %}
-</div>
-
+        {% include "includes/question_csv_format_guide.html" %}
     </div>
 </div>
-<style>
-.qb-import-layout { padding: 1.5rem 2rem; display: grid; gap: 1.25rem; max-width: 1100px; }
-.qb-import-upload .faculty-page-header { margin-bottom: 1rem; }
-.qb-import-actions { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-top: 0.5rem; }
-.qb-import-upload input[type="file"] { width: 100%; font-size: 0.9rem; }
-</style>
 {% endblock %}

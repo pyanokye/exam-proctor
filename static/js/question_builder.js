@@ -143,10 +143,30 @@
         });
     }
 
+    // ── Answer editor follows the Type dropdown ──────────────────────────────
+    // All three editors are in the DOM. Only the one matching the selected type
+    // is shown, and the others have their inputs disabled so the browser never
+    // posts MCQ options for a short-answer question (QuestionForm.clean picks
+    // fields by type, and a stale option_label_0 would resurrect old choices).
+    const answerPanels = form.querySelectorAll("[data-qb-answer-panel]");
+
+    function showAnswerPanelFor(type) {
+        answerPanels.forEach((panel) => {
+            const matches = panel.dataset.qbAnswerPanel === type;
+            panel.hidden = !matches;
+            panel.querySelectorAll("input, textarea, select, button").forEach((field) => {
+                field.disabled = !matches;
+            });
+        });
+    }
+
+    if (answerPanels.length) {
+        showAnswerPanelFor(questionTypeSelect ? questionTypeSelect.value : "mcq");
+    }
+
     if (questionTypeSelect) {
         questionTypeSelect.addEventListener("change", () => {
-            const hidden = document.getElementById("qb-type-changed");
-            if (hidden) hidden.value = "1";
+            showAnswerPanelFor(questionTypeSelect.value);
         });
     }
 

@@ -17,6 +17,9 @@ DEBUG = os.getenv("DJANGO_DEBUG", "True").lower() == "true"
 ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
 
 INSTALLED_APPS = [
+    # Must precede staticfiles: it replaces `runserver` with the ASGI one, and
+    # without it Django serves WSGI only and every /ws/ request 404s.
+    "daphne",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -40,6 +43,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "apps.accounts.middleware.HtmxAuthRedirectMiddleware",
     "apps.accounts.middleware.TeacherApprovalMiddleware",
     "apps.accounts.middleware.StudentIDReviewMiddleware",
 ]
@@ -111,6 +115,8 @@ MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+CSRF_FAILURE_VIEW = "apps.accounts.views.csrf_failure"
 
 LOGIN_URL = "accounts:login"
 LOGIN_REDIRECT_URL = "accounts:dashboard"
@@ -227,6 +233,13 @@ PROCTORING = {
     # Max accepted size of a single live/ID-verify webcam frame (decoded bytes).
     "MAX_FRAME_BYTES": _env_int("PROCTORING_MAX_FRAME_BYTES", 1_500_000, 100_000, 20_000_000),
     "DISCONNECT_GRACE_SECONDS": 120,
+    # Re-verify the student's face before they may *continue* an already-started
+    # exam (reopened tab, "Continue Exam", refresh). Closes the "verify, then
+    # hand the laptop to someone else" gap. The immediate reload right after a
+    # pass is not treated as a resume: any take_exam load within
+    # REVERIFY_GRACE_SECONDS of the admission timestamp skips re-verification.
+    "REVERIFY_ON_RESUME": os.getenv("PROCTORING_REVERIFY_ON_RESUME", "true").lower() == "true",
+    "REVERIFY_GRACE_SECONDS": _env_int("PROCTORING_REVERIFY_GRACE_SECONDS", 25, 5, 600),
     "ID_CONFIDENCE_THRESHOLD": 0.85,
     # ArcFace cosine similarity (ml/face_id). Same-person pairs typically
     # score >= 0.5, different people < 0.2; 0.35 balances impostor rejection
@@ -234,7 +247,18 @@ PROCTORING = {
     "FACE_ID_MATCH_THRESHOLD": _env_float("PROCTORING_FACE_ID_MATCH_THRESHOLD", 0.35, 0.05, 0.95),
     # Two tries: the automatic first frame, then one student-triggered retry.
     # A second failure permanently fails ID verification for the attempt.
+    # Only conclusive comparisons count — see MAX_ID_VERIFICATION_FAULTS.
     "MAX_ID_VERIFICATION_ATTEMPTS": 2,
+    # Rounds where no comparison was possible (no face in frame, model or
+    # reference face unavailable). These are system/environment problems, so
+    # they are retried rather than counted against the student.
+    "MAX_ID_VERIFICATION_FAULTS": _env_int("PROCTORING_MAX_ID_VERIFICATION_FAULTS", 3, 1, 20),
+    # Once the fault budget is spent, admit the student and flag the session
+    # for staff review. Set false to keep them retrying instead — stricter, but
+    # a missing reference face then locks a student out of their own exam.
+    "ADMIT_WHEN_UNVERIFIABLE": os.getenv(
+        "PROCTORING_ADMIT_WHEN_UNVERIFIABLE", "true"
+    ).lower() == "true",
     "VIOLATION_COOLDOWN_SECONDS": 10,
     # ML pipeline (Phase 3). Set USE_MOCK_ML=true to skip Torch/Ultralytics locally.
     "USE_MOCK_ML": os.getenv("PROCTORING_USE_MOCK_ML", "false").lower() == "true",

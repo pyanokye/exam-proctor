@@ -1,6 +1,7 @@
 from django.contrib import messages
+from django.core.exceptions import PermissionDenied
 from django.db import transaction
-from django.db.models import Count, Max
+from django.db.models import Count, Max, Q
 from django.http import FileResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -42,7 +43,13 @@ from .models import (
     get_resumable_attempt,
     grade_attempt,
 )
-from .permissions import get_bank_for_user, get_exam_for_user, get_question_for_user
+from .permissions import (
+    get_bank_for_user,
+    get_exam_for_attempt_review,
+    get_exam_for_user,
+    get_question_for_user,
+    user_can_view_attempts,
+)
 from .services.exam_control import add_exam_time, freeze_exam, unfreeze_exam
 from .services.question_import import import_questions_from_csv
 
@@ -69,6 +76,75 @@ def _attempt_is_writable(attempt):
     plus HTTP autosave grants unbounded wall-clock time.
     """
     return attempt.status == ExamAttempt.Status.IN_PROGRESS
+
+
+def _requires_resume_reverification(attempt, session):
+    """True when a proctored, already-admitted attempt is being *resumed* and
+    the student must re-prove their identity before the paper is served again.
+
+    The immediate page reload right after a pass carries a fresh
+    ``id_verified_at`` (within REVERIFY_GRACE_SECONDS), so it is not treated as
+    a resume — only a later reopen / "Continue Exam" / refresh is.
+    """
+    from apps.proctoring.models import ProctoringSession
+
+    if not settings.PROCTORING.get("REVERIFY_ON_RESUME", True):
+        return False
+    if session is None:
+        return False
+    if attempt.exam.strictness_level == Exam.StrictnessLevel.NONE:
+        return False
+    if attempt.status not in (
+        ExamAttempt.Status.IN_PROGRESS,
+        ExamAttempt.Status.PAUSED,
+    ):
+        return False
+    # Only attempts that already cleared identity can be re-verified. A pending
+    # or failed check is handled by the normal first-time verification path.
+    if session.id_verification_status not in (
+        ProctoringSession.IDVerificationStatus.PASSED,
+        ProctoringSession.IDVerificationStatus.UNVERIFIED,
+    ):
+        return False
+    verified_at = session.id_verified_at
+    if verified_at is None:
+        return True
+    grace = settings.PROCTORING.get("REVERIFY_GRACE_SECONDS", 25)
+    return (timezone.now() - verified_at).total_seconds() > grace
+
+
+def _begin_resume_reverification(attempt, session):
+    """Send an admitted attempt back through identity verification.
+
+    Flips the attempt to PENDING_ID and resets the session's identity state to
+    PENDING with a fresh set of tries, so the existing ID overlay / id_verify /
+    admit pipeline runs again. The persisted IDVerificationAttempt rows are
+    kept for the audit trail. The exam clock is unaffected: PENDING_ID uses the
+    same wall-clock-from-``started_at`` as IN_PROGRESS, so re-verifying grants
+    no extra time.
+    """
+    from apps.proctoring.models import ProctoringSession
+
+    session.id_verification_status = ProctoringSession.IDVerificationStatus.PENDING
+    session.id_verification_attempts = 0
+    session.id_verification_faults = 0
+    session.last_id_outcome = ""
+    session.id_verified_at = None
+    session.lockdown_active = False
+    session.save(
+        update_fields=[
+            "id_verification_status",
+            "id_verification_attempts",
+            "id_verification_faults",
+            "last_id_outcome",
+            "id_verified_at",
+            "lockdown_active",
+        ]
+    )
+    attempt.status = ExamAttempt.Status.PENDING_ID
+    attempt.timer_paused_at = None
+    attempt.pause_reason = ""
+    attempt.save(update_fields=["status", "timer_paused_at", "pause_reason"])
 
 
 def _enforce_attempt_deadline(attempt):
@@ -172,6 +248,32 @@ def exam_edit(request, pk):
             "locked_state": locked_state,
         },
     )
+
+
+@require_POST
+@role_required(User.Role.TEACHER, User.Role.ADMIN)
+def exam_delete(request, pk):
+    """Hard-delete an exam the caller is allowed to manage.
+
+    Blocked when any student attempt exists — cascading would wipe results,
+    proctoring sessions, and grades with no recovery path. Unpublished drafts
+    and approved-but-unused exams can still be removed cleanly.
+    """
+    exam = get_exam_for_user(request.user, pk)
+    attempt_count = exam.attempts.count()
+    if attempt_count:
+        messages.error(
+            request,
+            f"Cannot delete “{exam.title}” — {attempt_count} student "
+            f"attempt{'' if attempt_count == 1 else 's'} already exist. "
+            "Freeze the exam instead if you need to stop access.",
+        )
+        return redirect("exams:detail", pk=pk)
+
+    title = exam.title
+    exam.delete()
+    messages.success(request, f"Deleted exam “{title}”.")
+    return redirect("exams:list")
 
 
 @require_POST
@@ -421,6 +523,17 @@ def take_exam(request, attempt_id):
         attempt.pause_reason = ExamAttempt.PauseReason.FREEZE
         attempt.save(update_fields=["status", "timer_paused_at", "pause_reason"])
 
+    # Re-verify identity when the student is resuming an already-admitted
+    # attempt: this stops one person from clearing the ID check and then
+    # handing the session to someone else. Flips the attempt back to PENDING_ID
+    # so the normal ID overlay runs and no question text is served until the
+    # face is re-confirmed. Skipped while an admin freeze holds the attempt.
+    if (
+        attempt.status != ExamAttempt.Status.PAUSED
+        or attempt.pause_reason != ExamAttempt.PauseReason.FREEZE
+    ) and _requires_resume_reverification(attempt, session):
+        _begin_resume_reverification(attempt, session)
+
     # Content protection: never send question text to the browser before
     # identity verification has passed — otherwise a student could read the
     # whole paper from the DOM while "verifying". The client reloads once the
@@ -585,7 +698,7 @@ def reconnect_exam(request, attempt_id):
 
 
 @never_cache
-@role_required(User.Role.STUDENT, User.Role.TEACHER, User.Role.ADMIN)
+@role_required(User.Role.STUDENT, User.Role.TEACHER)
 def exam_result(request, attempt_id):
     attempt = get_object_or_404(
         ExamAttempt.objects.select_related(
@@ -597,13 +710,8 @@ def exam_result(request, attempt_id):
     if is_student and attempt.student_id != request.user.id:
         messages.error(request, "Not allowed.")
         return _no_store(redirect("accounts:dashboard"))
-    if request.user.is_teacher_user:
-        # Teachers may only view results for exams in their own courses.
-        from django.core.exceptions import PermissionDenied
-
-        teacher_profile = getattr(request.user, "teacher_profile", None)
-        if not teacher_profile or attempt.exam.course.teacher_id != teacher_profile.pk:
-            raise PermissionDenied
+    if not is_student and not user_can_view_attempts(request.user, attempt.exam):
+        raise PermissionDenied
 
     # Students must not open the result URL mid-attempt (question-text leak).
     if is_student and attempt.status not in ENDED_ATTEMPT_STATUSES:
@@ -671,9 +779,143 @@ def my_marks(request):
     return render(request, "exams/my_marks.html", {"attempts": attempts})
 
 
-@role_required(User.Role.TEACHER, User.Role.ADMIN)
+@never_cache
+@role_required(User.Role.TEACHER)
+def exam_results(request, pk):
+    """Roster of every submission for one exam, owned by the exam's teacher.
+
+    Each row opens `attempt_responses` in a modal, so the teacher can read a
+    student's answers without losing their place in the list.
+
+    Teacher-only: admins are refused here even though they can approve the
+    exam itself. See `user_can_view_attempts`.
+    """
+    exam = get_exam_for_attempt_review(request.user, pk)
+    attempts = list(
+        exam.attempts.filter(status__in=ENDED_ATTEMPT_STATUSES)
+        .select_related("student", "result", "proctoring_session")
+        .annotate(
+            pending_manual=Count(
+                "answers",
+                filter=Q(answers__review_status=Answer.ReviewStatus.PENDING_REVIEW),
+            )
+        )
+        .order_by("student__last_name", "student__first_name", "student__username", "attempt_number")
+    )
+    in_progress = exam.attempts.exclude(status__in=ENDED_ATTEMPT_STATUSES).count()
+
+    scored = [a.percentage for a in attempts if a.percentage is not None]
+    summary = {
+        "submissions": len(attempts),
+        "in_progress": in_progress,
+        "average_percentage": (sum(scored) / len(scored)) if scored else None,
+        "passed": sum(1 for a in attempts if a.passed),
+        "pending_manual": sum(a.pending_manual for a in attempts),
+        "max_score": sum(
+            (eq.marks_override or eq.question.marks)
+            for eq in exam.exam_questions.select_related("question")
+        ),
+    }
+    return _no_store(
+        render(
+            request,
+            "exams/exam_results.html",
+            {
+                "exam": exam,
+                "attempts": attempts,
+                "summary": summary,
+                "portal_nav": "exams",
+                "portal_page_title": f"Results — {exam.title}",
+            },
+        )
+    )
+
+
+@never_cache
+@role_required(User.Role.TEACHER)
+def attempt_responses(request, attempt_id):
+    """Modal body: one student's responses, question by question.
+
+    Walks the exam's questions rather than the attempt's answers so skipped
+    questions still appear, and so marks come from `marks_override` when set.
+
+    The exam is re-derived from the attempt before the permission check, so a
+    teacher can't reach another course's attempt by guessing an id.
+    """
+    attempt = get_object_or_404(
+        ExamAttempt.objects.select_related(
+            "exam__course__teacher__user", "student", "result"
+        ),
+        pk=attempt_id,
+    )
+    exam = get_exam_for_attempt_review(request.user, attempt.exam_id)
+
+    answers_by_question = {
+        a.question_id: a for a in attempt.answers.select_related("question")
+    }
+    rows = []
+    for eq in exam.exam_questions.select_related("question"):
+        question = eq.question
+        answer = answers_by_question.get(question.pk)
+        correct_value = (question.correct_answer or {}).get("value")
+        given_value = (answer.selected_option or {}).get("value") if answer else None
+        text_answer = (answer.text_answer if answer else "") or ""
+
+        if question.question_type == Question.QuestionType.MCQ:
+            choices = [
+                (opt.get("key"), opt.get("label", "")) for opt in question.options or []
+            ]
+        elif question.question_type == Question.QuestionType.TRUE_FALSE:
+            choices = [("true", "True"), ("false", "False")]
+        else:
+            choices = []
+
+        rows.append(
+            {
+                "question": question,
+                "answer": answer,
+                "max_marks": eq.marks_override or question.marks,
+                "options": [
+                    {
+                        "key": key,
+                        "label": label,
+                        "is_correct": key == correct_value,
+                        "is_selected": key == given_value,
+                    }
+                    for key, label in choices
+                ],
+                "text_answer": text_answer,
+                "answered": bool(given_value or text_answer.strip()),
+            }
+        )
+
+    session = getattr(attempt, "proctoring_session", None)
+    proctoring = None
+    if session is not None:
+        proctoring = {
+            "strike_count": session.strike_count,
+            "violation_count": session.violations.count(),
+            "id_status": session.get_id_verification_status_display(),
+        }
+
+    return _no_store(
+        render(
+            request,
+            "partials/portal/attempt_responses.html",
+            {
+                "exam": exam,
+                "attempt": attempt,
+                "result": getattr(attempt, "result", None),
+                "rows": rows,
+                "proctoring": proctoring,
+            },
+        )
+    )
+
+
+@role_required(User.Role.TEACHER)
 def pending_reviews(request, pk):
-    exam = get_exam_for_user(request.user, pk)
+    exam = get_exam_for_attempt_review(request.user, pk)
     answers = Answer.objects.filter(
         attempt__exam=exam,
         review_status=Answer.ReviewStatus.PENDING_REVIEW,
@@ -681,14 +923,14 @@ def pending_reviews(request, pk):
     return render(request, "exams/pending_reviews.html", {"exam": exam, "answers": answers})
 
 
-@role_required(User.Role.TEACHER, User.Role.ADMIN)
+@role_required(User.Role.TEACHER)
 def grade_answer(request, answer_id):
     answer = get_object_or_404(
         Answer.objects.select_related("attempt__exam__course__teacher__user", "question"),
         pk=answer_id,
     )
-    # Reuse get_exam_for_user to enforce course ownership for teachers; admins always pass.
-    get_exam_for_user(request.user, answer.attempt.exam_id)
+    # Marking is the teacher's alone -- admins are refused, same as the roster.
+    get_exam_for_attempt_review(request.user, answer.attempt.exam_id)
     form = ManualGradeForm(request.POST or None)
     max_marks = answer.question.marks
     if request.method == "POST" and form.is_valid():
@@ -776,7 +1018,12 @@ def question_bank_create(request):
     return render(
         request,
         "exams/question_bank_create.html",
-        {"form": form, "portal_nav": "banks", "qb_tab": "builder"},
+        {
+            "form": form,
+            "portal_nav": "banks",
+            "portal_breadcrumb": "NEW QUESTION BANK",
+            "qb_tab": "setup",
+        },
     )
 
 
@@ -811,6 +1058,24 @@ def _create_blank_question(bank):
     )
 
 
+BLANK_MCQ_OPTIONS = [{"key": key, "label": ""} for key in ("A", "B", "C", "D")]
+
+
+def _mcq_options_for(question):
+    """Rows to prefill the MCQ editor with.
+
+    The editor is always rendered so the teacher can switch question type
+    without a round trip, which means a short-answer question needs starter
+    rows — the form rejects fewer than two options.
+    """
+    if question is None:
+        return BLANK_MCQ_OPTIONS
+    options = [opt for opt in (question.options or []) if opt.get("key") not in ("true", "false")]
+    if len(options) >= 2:
+        return options
+    return BLANK_MCQ_OPTIONS
+
+
 def _builder_context(bank, questions, active_question, form=None):
     sections = {}
     for q in questions:
@@ -830,10 +1095,12 @@ def _builder_context(bank, questions, active_question, form=None):
         "next_question": next_question,
         "prev_question": prev_question,
         "form": form or (QuestionForm(instance=active_question) if active_question else None),
+        "mcq_options": _mcq_options_for(active_question),
         "total_questions": total,
         "complete_count": complete,
         "total_marks": bank.total_marks,
         "portal_nav": "banks",
+        "portal_breadcrumb": "QUESTION BUILDER",
         "qb_tab": "builder",
     }
 
@@ -886,7 +1153,13 @@ def question_bank_library(request, bank_id):
     return render(
         request,
         "exams/question_bank_library.html",
-        {"bank": bank, "questions": questions, "portal_nav": "banks", "qb_tab": "library"},
+        {
+            "bank": bank,
+            "questions": questions,
+            "portal_nav": "banks",
+            "portal_breadcrumb": "QUESTION LIBRARY",
+            "qb_tab": "library",
+        },
     )
 
 
@@ -945,7 +1218,13 @@ def question_bank_import(request, bank_id):
     return render(
         request,
         "exams/question_bank_import.html",
-        {"form": form, "bank": bank, "portal_nav": "banks", "qb_tab": "import"},
+        {
+            "form": form,
+            "bank": bank,
+            "portal_nav": "banks",
+            "portal_breadcrumb": "BULK IMPORT",
+            "qb_tab": "import",
+        },
     )
 
 

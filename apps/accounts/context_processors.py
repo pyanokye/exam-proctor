@@ -38,6 +38,7 @@ def portal_sidebar(request):
         "pending_exams": 0,
         "pending_student_ids": 0,
         "published_exams": 0,
+        "awaiting_publish": 0,
         "flagged_sessions": 0,
         # Admin sidebar shows disk usage of the MEDIA_ROOT volume.
         "storage_used_pct": _media_storage_pct() if user.is_admin_user else 0,
@@ -62,6 +63,13 @@ def portal_sidebar(request):
         ctx["flagged_sessions"] = ProctoringSession.objects.filter(
             strike_count__gt=0,
             attempt__exam__course__teacher__user=user,
+        ).count()
+        # Approved exams still waiting on the teacher's publish. Without this
+        # count the step is easy to forget, and the exam never opens.
+        ctx["awaiting_publish"] = Exam.objects.filter(
+            course__teacher__user=user,
+            approval_status=Exam.ApprovalStatus.APPROVED,
+            is_published=False,
         ).count()
 
     return ctx

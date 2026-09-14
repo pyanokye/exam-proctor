@@ -8,6 +8,10 @@ class ProctoringSession(models.Model):
         PENDING = "pending", "Pending"
         PASSED = "passed", "Passed"
         FAILED = "failed", "Failed"
+        # Admitted without a face match because the system could not perform
+        # one (no reference on file, model unavailable). The student sits the
+        # exam; the session is flagged so staff can review it afterwards.
+        UNVERIFIED = "unverified", "Admitted Without Face Match"
 
     attempt = models.OneToOneField(
         ExamAttempt, on_delete=models.CASCADE, related_name="proctoring_session"
@@ -19,7 +23,23 @@ class ProctoringSession(models.Model):
         choices=IDVerificationStatus.choices,
         default=IDVerificationStatus.PENDING,
     )
-    id_verification_attempts = models.PositiveIntegerField(default=0)
+    # When the current identity decision was last made (set on admit). Used to
+    # tell the immediate post-verify page reload apart from a later *resume*,
+    # so re-verification is only demanded when a student reopens/continues.
+    id_verified_at = models.DateTimeField(null=True, blank=True)
+    id_verification_attempts = models.PositiveIntegerField(
+        default=0,
+        help_text="Conclusive face comparisons only — system faults are not counted.",
+    )
+    id_verification_faults = models.PositiveIntegerField(
+        default=0,
+        help_text="Rounds that could not produce a comparison (no face, model or reference unavailable).",
+    )
+    last_id_outcome = models.CharField(
+        max_length=20,
+        blank=True,
+        help_text="Outcome of the most recent identity round: match, no_match, no_face, unavailable.",
+    )
     lockdown_active = models.BooleanField(default=False)
     last_frame_at = models.DateTimeField(null=True, blank=True)
     last_heartbeat_at = models.DateTimeField(null=True, blank=True)
@@ -60,6 +80,15 @@ class IDVerificationAttempt(models.Model):
     id_check_passed = models.BooleanField(default=False)
     face_check_passed = models.BooleanField(default=False)
     status = models.CharField(max_length=20, choices=Status.choices)
+    outcome = models.CharField(
+        max_length=20,
+        blank=True,
+        help_text="match, no_match, no_face or unavailable.",
+    )
+    notes = models.TextField(
+        blank=True,
+        help_text="Why the round ended this way — shown to staff in the audit trail.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
 

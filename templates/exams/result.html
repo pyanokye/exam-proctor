@@ -90,7 +90,7 @@
                 <li class="result-answer">
                     <p class="result-answer-q">{{ answer.question.text }}</p>
                     <p class="result-answer-meta">
-                        Marks: {{ answer.marks_obtained|default:"—" }} / {{ answer.question.marks }}
+                        Marks: {{ answer.marks_awarded|default:"—" }} / {{ answer.question.marks }}
                         {% if answer.review_status %}· {{ answer.get_review_status_display }}{% endif %}
                     </p>
                 </li>

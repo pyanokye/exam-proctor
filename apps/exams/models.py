@@ -1,5 +1,6 @@
 import secrets
 import string
+from datetime import timedelta
 
 from django.conf import settings
 from django.db import models, transaction
@@ -199,6 +200,50 @@ class Exam(models.Model):
             "no_schedule": "Schedule not set",
         }
         return labels.get(self.availability_state(), "Not available")
+
+    # Publication is the teacher's call after an admin approves (see
+    # exams.views.exam_publish). Nothing else reminds them, so an approved exam
+    # left unpublished would quietly never open. These helpers make that state
+    # visible everywhere the teacher looks, louder as the window approaches.
+    PUBLISH_SOON_HOURS = 24
+
+    @property
+    def awaits_publish(self):
+        return (
+            self.approval_status == self.ApprovalStatus.APPROVED
+            and not self.is_published
+        )
+
+    def publish_urgency(self, now=None):
+        """How pressing the missing publish is: '', 'later', 'soon', 'missed', 'expired'.
+
+        ``missed`` means students should be sitting the exam right now and
+        cannot — the failure this whole notion exists to catch. ``expired`` is
+        that failure after the fact, when publishing alone can no longer fix it.
+        """
+        if not self.awaits_publish:
+            return ""
+        if not self.available_from or not self.available_until:
+            return "later"
+        now = now or timezone.now()
+        if now > self.available_until:
+            return "expired"
+        if now >= self.available_from:
+            return "missed"
+        if self.available_from - now <= timedelta(hours=self.PUBLISH_SOON_HOURS):
+            return "soon"
+        return "later"
+
+    def publish_urgency_label(self, now=None):
+        return {
+            "expired": (
+                "Window closed while unpublished — students never saw it. "
+                "Set a new schedule and resubmit for approval"
+            ),
+            "missed": "Window has opened — students cannot see it until you publish",
+            "soon": "Window opens within a day — publish it",
+            "later": "Approved — awaiting your publish",
+        }.get(self.publish_urgency(now), "")
 
 
 class ExamAccessCode(models.Model):

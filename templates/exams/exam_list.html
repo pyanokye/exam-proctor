@@ -22,6 +22,13 @@
                 <div class="faculty-list-actions">
                     <a href="{% url 'exams:exam_questions' e.pk %}" class="btn btn-outline btn-sm">Questions</a>
                     <a href="{% url 'exams:detail' e.pk %}" class="btn btn-primary btn-sm">Manage</a>
+                    <form method="post"
+                          action="{% url 'exams:delete' e.pk %}"
+                          class="admin-inline-form"
+                          onsubmit="return confirm('Delete “{{ e.title|escapejs }}”? This cannot be undone.');">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-danger-outline btn-sm">Delete</button>
+                    </form>
                 </div>
             </div>
         </div>

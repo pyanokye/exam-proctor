@@ -24,7 +24,7 @@ from apps.accounts.forms import (
     TeacherRegistrationForm,
 )
 from apps.accounts.models import AdminProfile, StudentProfile, TeacherProfile, User
-from apps.accounts.portal import render_portal
+from apps.accounts.portal import hx_redirect, is_htmx, render_portal
 from apps.courses.models import Course
 from apps.exams.models import (
     Exam,
@@ -46,6 +46,36 @@ def home(request):
     if request.user.is_authenticated:
         return redirect("accounts:dashboard")
     return redirect("accounts:login")
+
+
+# Forms that can simply be re-fetched with GET and submitted again.
+CSRF_RETRY_PREFIXES = ("/login/student/", "/login/teacher/", "/login/admin/", "/register/")
+
+
+def csrf_failure(request, reason="", template_name=""):
+    """Recover from a stale CSRF token instead of Django's raw 403 page.
+
+    Logging in or out rotates the token, so a page left open across that point
+    still carries the old one. Its next POST (typically the header's Log out
+    form) must land on a usable page rather than a dead end.
+    """
+    if any(request.path.startswith(prefix) for prefix in CSRF_RETRY_PREFIXES):
+        target = request.path
+        note = "That form expired before it was submitted. Please try again."
+    elif request.user.is_authenticated:
+        target = reverse("accounts:dashboard")
+        note = "That page was out of date, so nothing was changed. Please try again."
+    else:
+        target = reverse("accounts:login")
+        note = "Your session expired. Please sign in again."
+
+    messages.add_message(request, messages.INFO, note, fail_silently=True)
+
+    # CSRF rejection happens upstream of HtmxAuthRedirectMiddleware, so HTMX
+    # requests need the full-page redirect header applied here.
+    if is_htmx(request):
+        return hx_redirect(target)
+    return redirect(target)
 
 
 def _admin_sidebar_context():
@@ -469,6 +499,19 @@ def dashboard(request):
             .annotate(question_count=Count("questions"))
             .order_by("-created_at")[:5]
         )
+        # Approved but unpublished exams open for nobody. Surface them first,
+        # most-urgent first, so the missing publish can't go unnoticed.
+        awaiting_publish = sorted(
+            exams.filter(
+                approval_status=Exam.ApprovalStatus.APPROVED, is_published=False
+            ).select_related("course"),
+            key=lambda exam: (
+                {"missed": 0, "expired": 1, "soon": 2, "later": 3}.get(
+                    exam.publish_urgency(), 4
+                ),
+                exam.available_from or timezone.now(),
+            ),
+        )
         return render_portal(
             request,
             "partials/portal/dashboard_teacher.html",
@@ -476,6 +519,7 @@ def dashboard(request):
                 "portal_nav": "dashboard",
                 "exam_count": exams.count(),
                 "published_count": exams.filter(is_published=True).count(),
+                "awaiting_publish_exams": awaiting_publish,
                 "banks": banks,
             },
             page_title="Teacher Dashboard",

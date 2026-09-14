@@ -86,7 +86,8 @@ Browser (webcam + lockdown JS)
 - Multiple people
 - Sustained look-away (5 seconds)
 
-**Enforcement:** 3-strike tolerance → warnings → auto-terminate on 3rd strike
+**Enforcement (Level 1, the default):** 5-strike tolerance → acknowledged warnings → auto-terminate on the 5th strike
+Per-exam strictness: *Not strict* (no checks) · *Level 1* (5 strikes) · *Level 2* (zero tolerance — any violation ends the exam)
 
 **Say:** "This directly addresses the literature gap. YOLO sees objects humans would see in an exam hall."
 
@@ -187,4 +188,4 @@ A: Locally developed, tailored to KNUST workflow (question banks, admin approval
 
 ## One-Paragraph Elevator Pitch (memorise this)
 
-> Remote examinations at universities like KNUST rely heavily on browser-based platforms that cannot see whether students introduce phones, books, or notes during the test. My project addresses this research gap by building a Django web examination system integrated with YOLOv5 deep learning for real-time webcam proctoring. The system verifies identity before the exam starts, enforces lockdown rules, detects prohibited objects and behaviours, applies a three-strike policy, and gives teachers evidence to review flagged sessions. I evaluated the prototype using standard object-detection metrics and controlled test scenarios, demonstrating that automated visual proctoring is feasible on ordinary student hardware and can strengthen academic integrity in online assessments.
+> Remote examinations at universities like KNUST rely heavily on browser-based platforms that cannot see whether students introduce phones, books, or notes during the test. My project addresses this research gap by building a Django web examination system integrated with YOLOv5 deep learning for real-time webcam proctoring. The system verifies identity before the exam starts, enforces lockdown rules, detects prohibited objects and behaviours, applies a five-strike policy, and gives teachers evidence to review flagged sessions. I evaluated the prototype using standard object-detection metrics and controlled test scenarios, demonstrating that automated visual proctoring is feasible on ordinary student hardware and can strengthen academic integrity in online assessments.

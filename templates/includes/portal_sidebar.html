@@ -97,6 +97,7 @@
            hx-indicator="#portal-loading">
             <span class="portal-nav-link-inner">{% include "includes/icon.html" with name="clipboard" size="sm" only %}<span>{% if user.is_admin_user %}All Exams{% else %}Exams{% endif %}</span></span>
             {% if user.is_admin_user and published_exams %}<span class="nav-badge nav-badge-ok">{{ published_exams }}</span>{% endif %}
+            {% if awaiting_publish %}<span class="nav-badge nav-badge-warn" title="Approved exams awaiting your publish">{{ awaiting_publish }}</span>{% endif %}
         </a>
         {% if user.is_admin_user %}
         <a href="{% url 'admin_proctoring_audit' %}"

@@ -18,6 +18,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import SimpleTestCase, TestCase, override_settings
 
 from ml.face_id.service import match_score
+from ml.id_verification.exam_verify import NO_FACE, NO_MATCH, UNAVAILABLE
 
 
 def _jpeg_bytes(color=(120, 100, 90), size=(64, 64)) -> bytes:
@@ -235,15 +236,20 @@ class ExamVerifyTests(TestCase):
             self.addCleanup(patcher.stop)
         return verify_exam_id_frame(frame, student_profile=self.profile)
 
-    def test_model_unavailable_auto_passes(self):
+    # Whether an unverifiable student is admitted is a policy decision made in
+    # apps/proctoring/tasks.py, where it can be counted and flagged. This layer
+    # only reports that no comparison was possible.
+    def test_model_unavailable_reports_unavailable(self):
         result = self._verify(available=False)
-        self.assertTrue(result.passed)
+        self.assertEqual(result.outcome, UNAVAILABLE)
+        self.assertFalse(result.is_conclusive)
         self.assertIn("unavailable", result.errors[0])
 
-    def test_no_reference_on_file_auto_passes(self):
+    def test_no_reference_on_file_reports_unavailable(self):
         result = self._verify(frame_embedding=[1.0, 0.0])
-        self.assertTrue(result.passed)
-        self.assertIn("face match skipped", result.errors[0])
+        self.assertEqual(result.outcome, UNAVAILABLE)
+        self.assertFalse(result.is_conclusive)
+        self.assertIn("No face scan or photo on file", result.errors[0])
 
     def test_stored_embedding_match_passes(self):
         self.profile.face_embedding = [1.0, 0.0]
@@ -265,7 +271,16 @@ class ExamVerifyTests(TestCase):
         # embed_face returning None for the frame means no face detected.
         result = self._verify(frame_embedding=None)
         self.assertFalse(result.passed)
+        self.assertEqual(result.outcome, NO_FACE)
+        self.assertFalse(result.is_conclusive)
         self.assertIn("No face detected", result.errors[0])
+
+    def test_a_mismatch_is_a_conclusive_identity_decision(self):
+        self.profile.face_embedding = [1.0, 0.0]
+        self.profile.save()
+        result = self._verify(frame_embedding=[0.0, 1.0], score=0.12)
+        self.assertEqual(result.outcome, NO_MATCH)
+        self.assertTrue(result.is_conclusive)
 
     def test_lazy_backfill_from_profile_photo(self):
         from django.core.files.base import ContentFile

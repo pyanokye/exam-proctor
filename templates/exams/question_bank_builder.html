@@ -1,28 +1,32 @@
-{% extends "base.html" %}
+{% extends "layouts/portal.html" %}
 {% load static %}
 {% block title %}Question Builder — {{ bank.title }}{% endblock %}
-{% block body %}
-{% include "includes/question_bank_header.html" %}
+{% block portal_content %}
+<div class="portal-page" data-portal-nav="banks" data-portal-title="Question Builder">
 
-<div class="portal-layout qb-page">
-    {% include "includes/portal_sidebar.html" %}
-    <div class="portal-main qb-page-main">
-
-<div class="qb-subbar">
-    <div class="qb-breadcrumb">
-        <a href="{% url 'exams:question_banks' %}">{{ bank.course.code }}</a>
-        <span>›</span>
-        <strong>{{ bank.title }}</strong>
-    </div>
-    <div class="faculty-list-actions">
-        <a href="{% url 'exams:question_bank_library' bank.pk %}" class="btn btn-outline btn-xs">Open Library</a>
+    <header class="exam-page-head">
+        <div>
+            <p class="exam-page-eyebrow">Question bank</p>
+            <h1 class="admin-page-title">{{ bank.title }}</h1>
+            <p class="exam-page-subtitle">
+                <a href="{% url 'exams:question_banks' %}">{{ bank.course.code }}</a>
+                · {{ total_questions }} question{{ total_questions|pluralize }} · {{ total_marks }} mark{{ total_marks|pluralize }}
+            </p>
+        </div>
         {% if active_question %}
-        <button type="submit" form="qb-save-form" class="btn btn-primary btn-xs">Save Bank</button>
+        <div class="faculty-list-actions">
+            <button type="submit" form="qb-save-form" class="btn btn-primary btn-sm">Save Question</button>
+        </div>
         {% endif %}
-    </div>
-</div>
+    </header>
 
-<div class="qb-layout qb-layout--three">
+    {% include "includes/question_bank_tabs.html" %}
+
+    {% if messages %}
+    <ul class="messages">{% for message in messages %}<li class="{{ message.tags }}">{{ message }}</li>{% endfor %}</ul>
+    {% endif %}
+
+<div class="qb-layout {% if active_question and form %}qb-layout--three{% endif %}">
     <aside class="qb-outline">
         <div class="qb-outline-title">Exam Outline</div>
         {% for section_name, section_questions in sections.items %}
@@ -54,7 +58,7 @@
         <form method="post">
             {% csrf_token %}
             <input type="hidden" name="action" value="add_question">
-            <button type="submit" class="btn btn-outline btn-sm" style="width:100%;margin-top:0.75rem;">+ Add Question</button>
+            <button type="submit" class="btn btn-outline btn-sm qb-add-question-btn">+ Add Question</button>
         </form>
     </aside>
 
@@ -62,12 +66,8 @@
     <form method="post" id="qb-save-form" class="qb-editor-form">
         {% csrf_token %}
         <input type="hidden" name="action" value="save" id="qb-save-action">
-        {{ form.correct_value }}
 
         <main class="qb-editor">
-            {% if messages %}
-            <ul class="messages">{% for message in messages %}<li class="{{ message.tags }}">{{ message }}</li>{% endfor %}</ul>
-            {% endif %}
             {% if form.non_field_errors %}
             <ul class="messages">{% for error in form.non_field_errors %}<li class="error">{{ error }}</li>{% endfor %}</ul>
             {% endif %}
@@ -91,47 +91,59 @@
             <div class="qb-editor-body">
                 <label class="qb-label" for="qb-question-text">Question text</label>
                 {{ form.text }}
+                {% for error in form.text.errors %}<div class="field-error">{{ error }}</div>{% endfor %}
                 <p class="qb-field-hint">Select text and use the toolbar for **bold**, *italic*, `code`, or $formula$.</p>
 
-                {% if form.question_type.value == 'mcq' or active_question.question_type == 'mcq' %}
-                <label class="qb-label">Answer options</label>
-                <p class="qb-field-hint">Edit each option inline and mark the correct answer.</p>
-                <div id="qb-options-editor" class="qb-options-editor">
-                    {% with correct_key=active_question.correct_answer.value %}
-                    {% for opt in active_question.options %}
-                    <div class="qb-option-row {% if opt.key == correct_key %}correct{% endif %}" data-option-index="{{ forloop.counter0 }}">
-                        <span class="qb-option-key">{{ opt.key }}</span>
-                        <input type="text" class="qb-option-input qb-input" name="option_label_{{ forloop.counter0 }}" value="{{ opt.label }}" placeholder="Option {{ opt.key }}">
-                        <label class="qb-option-correct-label">
-                            <input type="radio" name="correct_option_index" value="{{ forloop.counter0 }}" {% if opt.key == correct_key %}checked{% endif %}>
-                            <span>Correct</span>
-                        </label>
-                        <button type="button" class="qb-option-remove" aria-label="Remove option">&times;</button>
-                    </div>
-                    {% endfor %}
-                    {% endwith %}
-                </div>
-                <button type="button" id="qb-add-option" class="btn btn-outline btn-xs qb-add-option-btn">+ Add Option</button>
+                {# All three answer editors are rendered; question_builder.js shows the
+                   one matching the Type dropdown and disables the inputs in the rest,
+                   so a hidden editor never posts fields for the wrong type. #}
+                {% with active_type=form.question_type.value %}
+                <div class="qb-answer-panels">
+                    <section class="qb-answer-panel" data-qb-answer-panel="mcq" {% if active_type != 'mcq' %}hidden{% endif %}>
+                        <label class="qb-label">Answer options</label>
+                        <p class="qb-field-hint">Edit each option inline and mark the correct answer.</p>
+                        <div id="qb-options-editor" class="qb-options-editor">
+                            {% with correct_key=active_question.correct_answer.value %}
+                            {% for opt in mcq_options %}
+                            <div class="qb-option-row {% if opt.key == correct_key %}correct{% endif %}" data-option-index="{{ forloop.counter0 }}">
+                                <span class="qb-option-key">{{ opt.key }}</span>
+                                <input type="text" class="qb-option-input qb-input" name="option_label_{{ forloop.counter0 }}" value="{{ opt.label }}" placeholder="Option {{ opt.key }}">
+                                <label class="qb-option-correct-label">
+                                    <input type="radio" name="correct_option_index" value="{{ forloop.counter0 }}" {% if opt.key == correct_key %}checked{% endif %}>
+                                    <span>Correct</span>
+                                </label>
+                                <button type="button" class="qb-option-remove" aria-label="Remove option">&times;</button>
+                            </div>
+                            {% endfor %}
+                            {% endwith %}
+                        </div>
+                        <button type="button" id="qb-add-option" class="btn btn-outline btn-xs qb-add-option-btn">+ Add Option</button>
+                    </section>
 
-                {% elif active_question.question_type == 'true_false' %}
-                <label class="qb-label">Answer options</label>
-                <div class="qb-options-editor qb-options-editor--tf">
-                    <label class="qb-option-row qb-option-row--selectable {% if active_question.correct_answer.value == 'true' %}correct{% endif %}">
-                        <span class="qb-option-key">T</span>
-                        <span class="qb-option-label">True</span>
-                        <input type="radio" name="correct_value" value="true" class="qb-option-radio" {% if active_question.correct_answer.value == 'true' %}checked{% endif %}>
-                    </label>
-                    <label class="qb-option-row qb-option-row--selectable {% if active_question.correct_answer.value == 'false' %}correct{% endif %}">
-                        <span class="qb-option-key">F</span>
-                        <span class="qb-option-label">False</span>
-                        <input type="radio" name="correct_value" value="false" class="qb-option-radio" {% if active_question.correct_answer.value == 'false' %}checked{% endif %}>
-                    </label>
-                </div>
+                    <section class="qb-answer-panel" data-qb-answer-panel="true_false" {% if active_type != 'true_false' %}hidden{% endif %}>
+                        <label class="qb-label">Answer options</label>
+                        <p class="qb-field-hint">Mark which statement is correct.</p>
+                        <div class="qb-options-editor qb-options-editor--tf">
+                            <label class="qb-option-row qb-option-row--selectable {% if active_question.correct_answer.value == 'true' %}correct{% endif %}">
+                                <span class="qb-option-key">T</span>
+                                <span class="qb-option-label">True</span>
+                                <input type="radio" name="correct_value" value="true" class="qb-option-radio" {% if active_question.correct_answer.value == 'true' %}checked{% endif %}>
+                            </label>
+                            <label class="qb-option-row qb-option-row--selectable {% if active_question.correct_answer.value == 'false' %}correct{% endif %}">
+                                <span class="qb-option-key">F</span>
+                                <span class="qb-option-label">False</span>
+                                <input type="radio" name="correct_value" value="false" class="qb-option-radio" {% if active_question.correct_answer.value == 'false' %}checked{% endif %}>
+                            </label>
+                        </div>
+                    </section>
 
-                {% elif active_question.question_type == 'short_answer' %}
-                <label class="qb-label" for="qb-correct-reference">Reference answer</label>
-                <input type="text" id="qb-correct-reference" name="correct_reference" class="qb-input" value="{{ active_question.correct_answer.reference|default:'' }}" placeholder="Expected answer or grading reference">
-                {% endif %}
+                    <section class="qb-answer-panel" data-qb-answer-panel="short_answer" {% if active_type != 'short_answer' %}hidden{% endif %}>
+                        <label class="qb-label" for="qb-correct-reference">Reference answer</label>
+                        <p class="qb-field-hint">Shown to you when grading. Short answers are always marked by hand.</p>
+                        <input type="text" id="qb-correct-reference" name="correct_reference" class="qb-input" value="{{ active_question.correct_answer.reference|default:'' }}" placeholder="Expected answer or grading reference">
+                    </section>
+                </div>
+                {% endwith %}
 
                 <label class="qb-label" for="qb-explanation">Explanation (optional)</label>
                 {{ form.explanation }}
@@ -152,30 +164,27 @@
 
         <aside class="qb-meta-panel qb-meta-panel--standalone">
             <h4 class="qb-meta-title">Question Metadata</h4>
-            <label class="qb-label">Points</label>
-            {{ form.marks }}
-            <label class="qb-label">Section</label>
-            {{ form.section }}
-            <label class="qb-label">Bloom's level</label>
-            {{ form.blooms_level }}
-            <label class="qb-label">Difficulty</label>
-            {{ form.difficulty }}
-            <label class="qb-label">Module tags</label>
-            {{ form.tags_text }}
-            <label class="qb-label">Type</label>
+            <label class="qb-label" for="{{ form.question_type.id_for_label }}">Type</label>
             {{ form.question_type }}
-            <p class="qb-field-hint">Save after changing question type to refresh the answer editor.</p>
+            <p class="qb-field-hint">Switching type swaps the answer editor straight away.</p>
+            <label class="qb-label" for="{{ form.marks.id_for_label }}">Points</label>
+            {{ form.marks }}
+            <label class="qb-label" for="{{ form.section.id_for_label }}">Section</label>
+            {{ form.section }}
+            <label class="qb-label" for="{{ form.blooms_level.id_for_label }}">Bloom's level</label>
+            {{ form.blooms_level }}
+            <label class="qb-label" for="{{ form.difficulty.id_for_label }}">Difficulty</label>
+            {{ form.difficulty }}
+            <label class="qb-label" for="{{ form.tags_text.id_for_label }}">Module tags</label>
+            {{ form.tags_text }}
             <label class="qb-check-label">{{ form.is_complete }} Mark as complete</label>
-            <button type="submit" class="btn btn-primary" style="width:100%;margin-top:0.75rem;">Mark Q{{ active_question.order }} Complete</button>
+            <button type="submit" class="btn btn-primary qb-meta-submit">Mark Q{{ active_question.order }} Complete</button>
         </aside>
     </form>
     <form method="post" id="qb-delete-form" action="{% url 'exams:question_delete' bank.pk active_question.pk %}" hidden>{% csrf_token %}</form>
 
     {% else %}
-    <main class="qb-editor">
-        {% if messages %}
-        <ul class="messages">{% for message in messages %}<li class="{{ message.tags }}">{{ message }}</li>{% endfor %}</ul>
-        {% endif %}
+    <main class="qb-editor qb-editor--empty">
         <div class="qb-empty-editor">
             <h2 class="faculty-page-title">Start building your question bank</h2>
             <p class="faculty-page-sub">Add questions one at a time in the builder, or upload a CSV file in bulk.</p>
@@ -189,17 +198,12 @@
             </div>
         </div>
     </main>
-    <aside class="qb-meta-panel qb-meta-panel--standalone qb-meta-panel--empty">
-        <h4 class="qb-meta-title">Question Metadata</h4>
-        <p class="qb-field-hint">Select or create a question to edit points, difficulty, Bloom's level, and tags.</p>
-    </aside>
     {% endif %}
 </div>
-
-    </div>
 </div>
 {% endblock %}
 
 {% block extra_js %}
-<script src="{% static 'js/question_builder.js' %}"></script>
+{{ block.super }}
+<script src="{% static 'js/question_builder.js' %}?v=2"></script>
 {% endblock %}

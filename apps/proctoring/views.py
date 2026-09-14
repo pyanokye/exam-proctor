@@ -14,6 +14,7 @@ from apps.accounts.decorators import role_required
 from apps.accounts.models import User
 from apps.accounts.portal import render_portal
 from apps.exams.models import Exam, ExamAttempt
+from apps.exams.permissions import visible_attempt_exams_q
 
 from .models import (
     ProctoringSession,
@@ -63,6 +64,20 @@ def _client_id_verification_status(session):
     return status
 
 
+def _id_verification_payload(session):
+    """Status plus the reason behind it, so the client can word the retry.
+
+    A face that did not match reads very differently to the student than a
+    camera that showed no face or a model that was not reachable.
+    """
+    return {
+        "id_verification_status": _client_id_verification_status(session),
+        "id_verification_reason": session.last_id_outcome,
+        "id_verification_attempts": session.id_verification_attempts,
+        "id_verification_faults": session.id_verification_faults,
+    }
+
+
 def _validate_frame(frame_b64):
     """Reject junk before it reaches Redis/Celery. Returns an error response or None."""
     if not isinstance(frame_b64, str) or not frame_b64:
@@ -85,7 +100,7 @@ def flagged_sessions(request):
         page_title = "Proctoring Audit"
     else:
         sessions_qs = ProctoringSession.objects.filter(
-            attempt__exam__course__teacher__user=request.user
+            visible_attempt_exams_q(request.user, prefix="attempt__exam__")
         )
         portal_nav = "flagged"
         page_title = "Flagged Sessions"
@@ -240,12 +255,12 @@ def id_verify(request):
     if settings.CELERY_TASK_ALWAYS_EAGER:
         verify_id_card(attempt_id, frame_b64)
         session.refresh_from_db()
+        session.attempt.refresh_from_db()
         return JsonResponse(
             {
                 "accepted": True,
-                "id_verification_status": _client_id_verification_status(session),
                 "attempt_status": session.attempt.status,
-                "id_verification_attempts": session.id_verification_attempts,
+                **_id_verification_payload(session),
             }
         )
 
@@ -529,8 +544,7 @@ def session_status(request, attempt_id):
         {
             "strike_count": session.strike_count,
             "max_strikes": session.max_strikes,
-            "id_verification_status": _client_id_verification_status(session),
-            "id_verification_attempts": session.id_verification_attempts,
+            **_id_verification_payload(session),
             "violations": violations,
             "attempt_status": attempt.status,
             "remaining_seconds": attempt.computed_remaining_seconds,

@@ -1,6 +1,7 @@
 Django>=4.2
 djangorestframework>=3.14
 channels>=4.0
+daphne>=4.1  # ASGI server; also what makes `manage.py runserver` serve WebSockets
 channels-redis>=4.1
 celery[redis]>=5.3
 redis>=5.0

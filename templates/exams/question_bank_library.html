@@ -1,28 +1,37 @@
-{% extends "base.html" %}
+{% extends "layouts/portal.html" %}
 {% block title %}Question Library — {{ bank.title }}{% endblock %}
-{% block body %}
-{% include "includes/question_bank_header.html" %}
-<div class="qb-subbar">
-    <div class="qb-breadcrumb"><a href="{% url 'exams:question_banks' %}">{{ bank.course.code }}</a> › <strong>{{ bank.title }}</strong> — Library</div>
-    <a href="{% url 'exams:question_bank_builder' bank.pk %}" class="btn btn-primary btn-xs">Open Builder</a>
-</div>
-<div class="portal-layout" style="min-height:auto;">
-    {% include "includes/portal_sidebar.html" %}
-    <main class="portal-main">
-        {% for q in questions %}
-        <div class="portal-card faculty-list-card">
-            <div class="faculty-list-row">
-                <div>
-                    <span class="question-type-badge">{{ q.get_question_type_display }}</span>
-                    <div class="faculty-list-title" style="margin-top:0.35rem;">Q{{ q.order }}. {{ q.text|truncatewords:25 }}</div>
-                    <div class="faculty-list-meta">{{ q.section }} · {{ q.marks }} pts · {% if q.is_complete %}Complete{% else %}Draft{% endif %}</div>
-                </div>
-                <a href="{% url 'exams:question_bank_builder' bank.pk %}?q={{ q.pk }}" class="btn btn-outline btn-sm">Edit in Builder</a>
-            </div>
+{% block portal_content %}
+<div class="portal-page" data-portal-nav="banks" data-portal-title="Question Library">
+
+    <header class="exam-page-head">
+        <div>
+            <p class="exam-page-eyebrow">Question bank</p>
+            <h1 class="admin-page-title">{{ bank.title }}</h1>
+            <p class="exam-page-subtitle">
+                <a href="{% url 'exams:question_banks' %}">{{ bank.course.code }}</a>
+                · every question in this bank
+            </p>
         </div>
-        {% empty %}
-        <div class="portal-card"><p class="admin-empty">No questions in this bank.</p></div>
-        {% endfor %}
-    </main>
+        <div class="faculty-list-actions">
+            <a href="{% url 'exams:question_bank_builder' bank.pk %}" class="btn btn-primary btn-sm">Open Builder</a>
+        </div>
+    </header>
+
+    {% include "includes/question_bank_tabs.html" %}
+
+    {% for q in questions %}
+    <div class="portal-card faculty-list-card">
+        <div class="faculty-list-row">
+            <div>
+                <span class="question-type-badge">{{ q.get_question_type_display }}</span>
+                <div class="faculty-list-title qb-library-title">Q{{ q.order }}. {{ q.text|truncatewords:25 }}</div>
+                <div class="faculty-list-meta">{{ q.section }} · {{ q.marks }} pts · {% if q.is_complete %}Complete{% else %}Draft{% endif %}</div>
+            </div>
+            <a href="{% url 'exams:question_bank_builder' bank.pk %}?q={{ q.pk }}" class="btn btn-outline btn-sm">Edit in Builder</a>
+        </div>
+    </div>
+    {% empty %}
+    <div class="portal-card"><p class="admin-empty">No questions in this bank.</p></div>
+    {% endfor %}
 </div>
 {% endblock %}

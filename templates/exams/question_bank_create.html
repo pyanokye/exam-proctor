@@ -1,35 +1,33 @@
-{% extends "base.html" %}
+{% extends "layouts/portal.html" %}
 {% block title %}New Question Bank — Exam Proctor{% endblock %}
-{% block body %}
-{% include "includes/question_bank_header.html" with bank=None %}
+{% block portal_content %}
+<div class="portal-page" data-portal-nav="banks" data-portal-title="New Question Bank">
 
-<div class="qb-subbar">
-    <div class="qb-breadcrumb">
-        <a href="{% url 'exams:question_banks' %}">Question Banks</a>
-        <span>›</span>
-        <strong>New Question Bank</strong>
-    </div>
-</div>
+    <header class="exam-page-head">
+        <div>
+            <p class="exam-page-eyebrow">Question bank</p>
+            <h1 class="admin-page-title">Set up your question bank</h1>
+            <p class="exam-page-subtitle">Choose a course and title, then open the builder to add questions manually or import a CSV.</p>
+        </div>
+        <div class="faculty-list-actions">
+            <a href="{% url 'exams:question_banks' %}" class="btn btn-outline btn-sm">← All banks</a>
+        </div>
+    </header>
 
-<div class="portal-layout" style="min-height:auto;">
-    {% include "includes/portal_sidebar.html" %}
-    <div class="portal-main" style="padding:1.5rem 2rem;max-width:960px;">
+    {% include "includes/question_bank_tabs.html" with bank=None %}
 
-        <div class="portal-card faculty-form-card">
-            <h2 class="faculty-page-title" style="margin:0 0 0.35rem;">Set up your question bank</h2>
-            <p class="faculty-page-sub" style="margin:0 0 1.25rem;">
-                Choose a course and title, then open the builder to add questions manually or import a CSV.
-            </p>
+    {% if messages %}
+    <ul class="messages">{% for message in messages %}<li class="{{ message.tags }}">{{ message }}</li>{% endfor %}</ul>
+    {% endif %}
 
-            {% if messages %}
-            <ul class="messages">{% for message in messages %}<li class="{{ message.tags }}">{{ message }}</li>{% endfor %}</ul>
-            {% endif %}
-
+    <div class="qb-create-layout">
+        <section class="portal-card faculty-form-card">
+            <h2 class="portal-card-title">Bank details</h2>
             <form method="post">
                 {% csrf_token %}
                 {% for field in form %}
-                <div class="form-group" style="margin-bottom:1rem;">
-                    <label class="qb-label">{{ field.label }}{% if field.field.required %} *{% endif %}</label>
+                <div class="form-group qb-create-field">
+                    <label class="qb-label" for="{{ field.id_for_label }}">{{ field.label }}{% if field.field.required %} *{% endif %}</label>
                     {{ field }}
                     {% for error in field.errors %}<div class="field-error">{{ error }}</div>{% endfor %}
                 </div>
@@ -40,10 +38,10 @@
                 <button type="submit" class="btn btn-primary">Create &amp; Open Builder</button>
                 {% endif %}
             </form>
-        </div>
+        </section>
 
-        <div class="qb-create-preview">
-            <h3 class="qb-csv-subtitle">What happens next</h3>
+        <section class="portal-card qb-create-preview">
+            <h2 class="portal-card-title">What happens next</h2>
             <div class="qb-create-steps">
                 <div class="qb-create-step">
                     <strong>Builder</strong>
@@ -58,7 +56,7 @@
                     <span>Review all questions in the bank before attaching them to exams.</span>
                 </div>
             </div>
-        </div>
+        </section>
     </div>
 </div>
 {% endblock %}

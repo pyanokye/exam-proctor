@@ -1,0 +1,93 @@
+{% extends "layouts/portal.html" %}
+{% block portal_content %}
+<div class="portal-page">
+    <header class="exam-page-head">
+        <div>
+            <p class="exam-page-eyebrow">Submissions</p>
+            <h1 class="admin-page-title">Results — {{ exam.title }}</h1>
+            <p class="exam-page-subtitle">{{ exam.course.code }} · open a student to read their responses question by question.</p>
+        </div>
+        <div class="faculty-list-actions">
+            <a class="btn btn-outline btn-sm" href="{% url 'exams:pending_reviews' exam.pk %}">Pending Reviews</a>
+            <a class="btn btn-outline btn-sm" href="{% url 'exams:detail' exam.pk %}">Back to exam</a>
+        </div>
+    </header>
+
+    <section class="portal-card">
+        <h2 class="portal-card-title portal-card-title--icon">
+            {% include "includes/icon.html" with name="clipboard" size="sm" only %}
+            Overview
+        </h2>
+        <div class="results-summary">
+            <div><span class="detail-label">Submissions</span><span class="results-summary-value">{{ summary.submissions }}</span></div>
+            <div><span class="detail-label">Still in progress</span><span class="results-summary-value">{{ summary.in_progress }}</span></div>
+            <div><span class="detail-label">Class average</span><span class="results-summary-value">{% if summary.average_percentage is not None %}{{ summary.average_percentage|floatformat:1 }}%{% else %}—{% endif %}</span></div>
+            <div><span class="detail-label">Passed</span><span class="results-summary-value">{{ summary.passed }} / {{ summary.submissions }}</span></div>
+            <div><span class="detail-label">Total marks</span><span class="results-summary-value">{{ summary.max_score }}</span></div>
+        </div>
+        {% if summary.pending_manual %}
+        <div class="portal-notice-card portal-notice-card--compact" role="status">
+            {% include "includes/icon.html" with name="warning" size="sm" only %}
+            <div class="portal-notice-content">
+                <strong class="portal-notice-title">{{ summary.pending_manual }} short answer{{ summary.pending_manual|pluralize }} awaiting your grade</strong>
+                <p class="portal-notice-body">Scores below stay provisional until every short answer is graded. Grade them from <a href="{% url 'exams:pending_reviews' exam.pk %}">Pending Reviews</a>.</p>
+            </div>
+        </div>
+        {% endif %}
+    </section>
+
+    <section class="portal-card">
+        <h2 class="portal-card-title portal-card-title--icon">
+            {% include "includes/icon.html" with name="users" size="sm" only %}
+            Student submissions ({{ attempts|length }})
+        </h2>
+        {% if attempts %}
+        <ul class="results-roster">
+            {% for a in attempts %}
+            <li>
+                <button type="button"
+                        class="results-row"
+                        data-attempt-open
+                        hx-get="{% url 'exams:attempt_responses' a.pk %}"
+                        hx-target="#attempt-responses-body"
+                        hx-swap="innerHTML"
+                        hx-indicator="#attempt-responses-loading">
+                    <span class="results-row-main">
+                        <span class="results-row-student">{{ a.student.get_full_name|default:a.student.username }}</span>
+                        <span class="results-row-meta">
+                            Attempt #{{ a.attempt_number }} · {{ a.get_status_display }}
+                            {% if a.ended_at %} · {{ a.ended_at|date:"M j, Y · H:i" }}{% endif %}
+                            {% if a.is_invalidated %} · <strong>Invalidated</strong>{% endif %}
+                            {% if a.pending_manual %} · <strong>{{ a.pending_manual }} awaiting review</strong>{% endif %}
+                        </span>
+                    </span>
+                    <span class="results-row-score">
+                        {% if a.score is not None %}
+                            <strong>{{ a.score|floatformat:"-2" }}</strong><span class="results-row-score-max"> / {{ summary.max_score }}</span>
+                            <span class="results-row-percent">{{ a.percentage|floatformat:1 }}%</span>
+                        {% else %}
+                            <span class="results-row-score-max">Not graded</span>
+                        {% endif %}
+                    </span>
+                    <span class="results-row-cue" aria-hidden="true">View responses</span>
+                </button>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="result-meta-line">No submissions yet. Results appear here as students submit.</p>
+        {% endif %}
+    </section>
+</div>
+
+<dialog id="attempt-responses-dialog" class="portal-modal portal-modal--wide" aria-labelledby="attempt-responses-heading">
+    <div class="attempt-responses-shell">
+        <div class="attempt-responses-topbar">
+            <strong id="attempt-responses-heading" class="portal-modal-title">Student responses</strong>
+            <button type="button" class="btn btn-outline btn-sm" data-attempt-close>Close</button>
+        </div>
+        <p id="attempt-responses-loading" class="attempt-responses-loading htmx-indicator">Loading responses…</p>
+        <div id="attempt-responses-body" class="attempt-responses-body"></div>
+    </div>
+</dialog>
+{% endblock %}

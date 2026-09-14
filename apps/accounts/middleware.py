@@ -1,7 +1,11 @@
+from urllib.parse import urlparse
+
+from django.contrib import messages
 from django.shortcuts import redirect
 from django.urls import reverse
 
 from .models import StudentProfile, User
+from .portal import hx_redirect
 
 
 COMMON_EXEMPT_PREFIXES = (
@@ -60,3 +64,67 @@ class StudentIDReviewMiddleware:
                     if path != review_url:
                         return redirect("accounts:id_review_pending")
         return self.get_response(request)
+
+
+# Pages that render their own full document (they extend base.html, not the
+# portal layout) and therefore must never be swapped into #portal-main.
+STANDALONE_AUTH_PREFIXES = (
+    "/login/",
+    "/register/",
+    "/logout/",
+    "/pending-approval/",
+    "/id-review/",
+)
+
+
+def _is_standalone_auth_path(path):
+    return any(path.startswith(prefix) for prefix in STANDALONE_AUTH_PREFIXES)
+
+
+class HtmxAuthRedirectMiddleware:
+    """Turn auth bounces on HTMX requests into full-page browser navigations.
+
+    A sidebar tab is loaded with hx-get into #portal-main. When the session has
+    expired the view answers 302 -> /login/, which XHR follows transparently, so
+    HTMX receives the login document and swaps it inside the still-rendered
+    portal shell. Answering with HX-Redirect instead makes the browser leave the
+    portal for the real login page.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        response = self.get_response(request)
+        if request.headers.get("HX-Request") != "true":
+            return response
+
+        if 300 <= response.status_code < 400:
+            location = response.headers.get("Location", "")
+            if location and _is_standalone_auth_path(urlparse(location).path):
+                self._note_expired_session(request, location)
+                return hx_redirect(location)
+            return response
+
+        # The redirect may already have been followed by the XHR layer (or a
+        # stale tab may target an auth page directly): either way the body is a
+        # standalone document, not a portal fragment.
+        if response.status_code == 200 and _is_standalone_auth_path(request.path):
+            return hx_redirect(request.get_full_path())
+
+        return response
+
+    @staticmethod
+    def _note_expired_session(request, location):
+        if request.user.is_authenticated:
+            return
+        if request.path.startswith("/logout/"):
+            return
+        if not urlparse(location).path.startswith("/login/"):
+            return
+        messages.add_message(
+            request,
+            messages.INFO,
+            "Your session expired. Please sign in again.",
+            fail_silently=True,
+        )

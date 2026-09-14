@@ -5,6 +5,7 @@ from asgiref.sync import async_to_sync
 from django.utils import timezone
 
 from apps.exams.models import Exam, ExamAttempt
+from ml.id_verification.exam_verify import MATCH, NO_MATCH, UNAVAILABLE
 
 from .models import IDVerificationAttempt, ProctoringSession, ViolationLog
 from .services import (
@@ -12,6 +13,13 @@ from .services import (
     handle_violation,
     strike_message,
     update_look_away_state,
+)
+
+# An identity decision has been made; further rounds must not reopen it.
+RESOLVED_ID_STATUSES = (
+    ProctoringSession.IDVerificationStatus.PASSED,
+    ProctoringSession.IDVerificationStatus.FAILED,
+    ProctoringSession.IDVerificationStatus.UNVERIFIED,
 )
 
 VIOLATION_PRIORITY = {
@@ -227,9 +235,44 @@ def verify_id_card(attempt_id, frame_b64):
     except Exception:
         logger.exception("verify_id_card crashed for attempt %s", attempt_id)
         try:
-            push_ws(attempt_id, {"type": "id_status", "status": "retry"})
+            push_ws(
+                attempt_id,
+                {"type": "id_status", "status": "retry", "reason": UNAVAILABLE},
+            )
         except Exception:
             logger.exception("Could not push retry status for attempt %s", attempt_id)
+
+
+def _run_face_check(frame_bytes, student, student_profile, logger):
+    """Compare the frame against the student's reference face.
+
+    Returns an ``ExamVerifyResult``; a crash inside the ML stack becomes an
+    ``unavailable`` outcome rather than an identity failure.
+    """
+    from django.conf import settings
+
+    from ml.id_verification.exam_verify import ExamVerifyResult, verify_exam_id_frame
+
+    if settings.PROCTORING.get("USE_MOCK_ML"):
+        return ExamVerifyResult(
+            passed=True,
+            id_confidence=0.95,
+            face_match_score=0.85,
+            outcome=MATCH,
+        )
+    try:
+        return verify_exam_id_frame(
+            frame_bytes, student_profile=student_profile, user=student
+        )
+    except Exception as exc:  # noqa: BLE001 — a fault must not read as a mismatch
+        logger.exception("ID verification raised for student %s", student.pk)
+        return ExamVerifyResult(
+            passed=False,
+            id_confidence=0.0,
+            face_match_score=0.0,
+            errors=[f"Face verification error: {exc}"],
+            outcome=UNAVAILABLE,
+        )
 
 
 def _verify_id_card_impl(attempt_id, frame_b64):
@@ -237,10 +280,9 @@ def _verify_id_card_impl(attempt_id, frame_b64):
 
     logger = logging.getLogger(__name__)
 
+    from django.conf import settings
     from django.db import transaction
 
-    # Lock the row while bumping the attempt counter so concurrent posts
-    # can't under-count and slip past MAX_ID_VERIFICATION_ATTEMPTS.
     with transaction.atomic():
         session = (
             ProctoringSession.objects.select_for_update()
@@ -256,83 +298,66 @@ def _verify_id_card_impl(attempt_id, frame_b64):
                 attempt.status,
             )
             return
-        if session.id_verification_status == ProctoringSession.IDVerificationStatus.FAILED:
-            logger.info("ID verify refused for attempt %s: already failed", attempt_id)
+        if session.id_verification_status in RESOLVED_ID_STATUSES:
+            logger.info(
+                "ID verify refused for attempt %s: already %s",
+                attempt_id,
+                session.id_verification_status,
+            )
             return
-        if session.id_verification_status == ProctoringSession.IDVerificationStatus.PASSED:
-            return
-        session.id_verification_attempts += 1
-        session.save(update_fields=["id_verification_attempts"])
 
     frame_bytes = decode_frame(frame_b64)
-    if not frame_bytes:
-        # Fall through as a failed attempt so junk frames still count
-        # toward MAX_ID_VERIFICATION_ATTEMPTS instead of looping forever.
-        logger.warning(
-            "ID verify for attempt %s received an undecodable frame.", attempt_id
-        )
-    passed = False
-    id_score = 0.0
-    face_score = 0.0
-
-    from django.conf import settings
-
     student = session.attempt.student
     student_profile = getattr(student, "student_profile", None)
     if student_profile is None:
-        # Fail closed — missing profile must never auto-pass identity checks.
+        # The registration scan lives on the user, so verification can still
+        # run; the missing row is a data fault for staff to repair.
         logger.warning(
-            "No student profile for attempt %s; identity verification fails closed.",
-            attempt_id,
+            "Student %s has no StudentProfile; verifying against the account photo. "
+            "Run: manage.py repair_student_profiles",
+            student.pk,
         )
-        passed = False
-        id_score = 0.0
-        face_score = 0.0
-    elif not frame_bytes:
-        pass  # keep passed=False; recorded below as a failed attempt
-    else:
-        if settings.PROCTORING.get("USE_MOCK_ML"):
-            passed = True
-            id_score = 0.95
-            face_score = 0.85
-        else:
-            try:
-                from ml.id_verification.exam_verify import verify_exam_id_frame
 
-                verify_result = verify_exam_id_frame(
-                    frame_bytes,
-                    student_profile=student_profile,
-                )
-                passed = verify_result.passed
-                id_score = verify_result.id_confidence
-                face_score = verify_result.face_match_score
-                if verify_result.errors:
-                    logger.info(
-                        "ID verify attempt %s for attempt %s: %s",
-                        session.id_verification_attempts,
-                        attempt_id,
-                        "; ".join(verify_result.errors),
-                    )
-            except Exception:
-                logger.exception("ID verification failed for attempt %s", attempt_id)
-                passed = False
+    if not frame_bytes:
+        logger.warning(
+            "ID verify for attempt %s received an undecodable frame.", attempt_id
+        )
+
+    result = _run_face_check(frame_bytes, student, student_profile, logger)
+    if result.errors:
+        logger.info(
+            "ID verify for attempt %s [%s]: %s",
+            attempt_id,
+            result.outcome,
+            "; ".join(result.errors),
+        )
 
     face_threshold = settings.PROCTORING.get("FACE_ID_MATCH_THRESHOLD", 0.35)
     attempt_record = IDVerificationAttempt.objects.create(
         session=session,
-        id_confidence_score=id_score,
-        face_match_score=face_score,
-        id_check_passed=passed,
-        # When the face check was skipped (no reference / library missing)
-        # mirror the overall decision so audit rows stay consistent.
-        face_check_passed=passed if face_score <= 0.0 else face_score >= face_threshold,
-        status=IDVerificationAttempt.Status.PASSED if passed else IDVerificationAttempt.Status.FAILED,
+        id_confidence_score=result.id_confidence,
+        face_match_score=result.face_match_score,
+        id_check_passed=result.passed,
+        # When no comparison happened, mirror the overall decision so audit
+        # rows stay consistent.
+        face_check_passed=(
+            result.face_match_score >= face_threshold
+            if result.face_match_score > 0.0
+            else result.passed
+        ),
+        status=(
+            IDVerificationAttempt.Status.PASSED
+            if result.passed
+            else IDVerificationAttempt.Status.FAILED
+        ),
+        outcome=result.outcome,
+        notes="; ".join(result.errors),
     )
     if frame_bytes:
         from django.core.files.base import ContentFile
 
         attempt_record.frame_image.save(
-            f"id_verify_{attempt_id}_{session.id_verification_attempts}.jpg",
+            f"id_verify_{attempt_id}_{attempt_record.pk}.jpg",
             ContentFile(frame_bytes),
             save=True,
         )
@@ -346,24 +371,79 @@ def _verify_id_card_impl(attempt_id, frame_b64):
         )
         attempt = session.attempt
         if attempt.status != ExamAttempt.Status.PENDING_ID:
-            session.save()
+            return
+        if session.id_verification_status in RESOLVED_ID_STATUSES:
             return
 
-        if passed:
-            session.id_verification_status = ProctoringSession.IDVerificationStatus.PASSED
-            session.lockdown_active = True
-            attempt.status = ExamAttempt.Status.IN_PROGRESS
-            attempt.save(update_fields=["status"])
-            push_ws(attempt_id, {"type": "id_status", "status": "passed"})
+        session.last_id_outcome = result.outcome
+        if result.is_conclusive:
+            session.id_verification_attempts += 1
         else:
+            session.id_verification_faults += 1
+
+        if result.passed:
+            _admit(session, attempt, ProctoringSession.IDVerificationStatus.PASSED)
+            push_ws(attempt_id, {"type": "id_status", "status": "passed"})
+        elif result.outcome == NO_MATCH:
             max_attempts = settings.PROCTORING.get("MAX_ID_VERIFICATION_ATTEMPTS", 2)
             if session.id_verification_attempts >= max_attempts:
-                session.id_verification_status = ProctoringSession.IDVerificationStatus.FAILED
+                session.id_verification_status = (
+                    ProctoringSession.IDVerificationStatus.FAILED
+                )
                 attempt.status = ExamAttempt.Status.TERMINATED
                 attempt.ended_at = timezone.now()
                 attempt.save(update_fields=["status", "ended_at"])
                 push_ws(attempt_id, {"type": "id_status", "status": "failed"})
             else:
-                push_ws(attempt_id, {"type": "id_status", "status": "retry"})
+                push_ws(
+                    attempt_id,
+                    {"type": "id_status", "status": "retry", "reason": NO_MATCH},
+                )
+        elif _should_admit_unverifiable(session, result.outcome, settings):
+            # The system, not the student, is why no comparison happened. Let
+            # them sit the exam and flag the session for staff review instead
+            # of locking them out of an exam they are entitled to take.
+            _admit(session, attempt, ProctoringSession.IDVerificationStatus.UNVERIFIED)
+            logger.warning(
+                "Attempt %s admitted without a face match after %s faults (%s).",
+                attempt_id,
+                session.id_verification_faults,
+                result.outcome,
+            )
+            push_ws(attempt_id, {"type": "id_status", "status": "unverified"})
+        else:
+            push_ws(
+                attempt_id,
+                {"type": "id_status", "status": "retry", "reason": result.outcome},
+            )
 
         session.save()
+
+
+def _admit(session, attempt, status):
+    session.id_verification_status = status
+    session.lockdown_active = True
+    # Stamp the admission time so take_exam can distinguish the immediate
+    # post-verify reload from a later resume (which must re-verify).
+    session.id_verified_at = timezone.now()
+    attempt.status = ExamAttempt.Status.IN_PROGRESS
+    attempt.save(update_fields=["status"])
+
+
+def _should_admit_unverifiable(session, outcome, settings):
+    """Whether repeated system faults should admit the student, flagged.
+
+    Only ``unavailable`` counts: that means the server could not perform a
+    comparison (no reference face, model unreachable), which the student cannot
+    fix and must not be locked out for. ``no_face`` is different — the camera is
+    working and the student can move into frame, so those rounds keep retrying.
+
+    ``ADMIT_WHEN_UNVERIFIABLE`` off keeps everyone retrying instead: stricter,
+    at the cost of stranding students whose reference face is missing.
+    """
+    if outcome != UNAVAILABLE:
+        return False
+    if not settings.PROCTORING.get("ADMIT_WHEN_UNVERIFIABLE", True):
+        return False
+    budget = settings.PROCTORING.get("MAX_ID_VERIFICATION_FAULTS", 3)
+    return session.id_attempts.filter(outcome=UNAVAILABLE).count() >= budget

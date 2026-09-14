@@ -291,6 +291,34 @@
         return Promise.reject(new Error("Fullscreen API not supported."));
     }
 
+    // --- Extended-display detection (HDMI / external monitor) ---------------
+    // window.screen.isExtended (Window Management API, Chromium) is true while
+    // more than one display is active. No permission prompt is needed for the
+    // boolean itself. Browsers without the API report undefined, so the check
+    // degrades to "cannot detect" rather than blocking legitimate students.
+    function secondDisplayConnected() {
+        return !!(window.screen && window.screen.isExtended === true);
+    }
+
+    let displayOverlayShown = false;
+
+    function watchSecondDisplay() {
+        if (!(window.screen && "isExtended" in window.screen)) return;
+        const overlay = document.getElementById("exam-display-overlay");
+        if (!overlay) return;
+        setInterval(() => {
+            if (ended) return;
+            const connected = secondDisplayConnected();
+            if (connected && !displayOverlayShown) {
+                displayOverlayShown = true;
+                overlay.hidden = false;
+            } else if (!connected && displayOverlayShown) {
+                displayOverlayShown = false;
+                overlay.hidden = true;
+            }
+        }, 2000);
+    }
+
     function wireBeginOverlay() {
         const overlay = document.getElementById("exam-begin-overlay");
         const btn = document.getElementById("exam-begin-btn");
@@ -351,6 +379,15 @@
             if (!STRICT_NONE && window.proctor && !window.proctor.isIdVerified()) {
                 return;
             }
+            // Proctored exams must run on a single display.
+            if (!STRICT_NONE && secondDisplayConnected()) {
+                if (errEl) {
+                    errEl.hidden = false;
+                    errEl.textContent = "Disconnect your second monitor before beginning.";
+                }
+                return;
+            }
+            if (errEl) errEl.hidden = true;
             // "Not strict" exams don't need fullscreen — just begin.
             if (!STRICT_NONE) {
                 try {
@@ -404,6 +441,7 @@
         if (!STRICT_NONE) {
             wireLockdownHandlers();
             wireStrikeDialog();
+            watchSecondDisplay();
         }
         document.dispatchEvent(new CustomEvent("exam:ready"));
     }

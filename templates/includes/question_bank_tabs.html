@@ -1,0 +1,20 @@
+{# Sub-navigation for one question bank. Lives inside the shared portal shell —
+   the section must not render a second brand header or sidebar. #}
+<nav class="qb-tabs" aria-label="Question bank views">
+    {% if bank %}
+    <a href="{% url 'exams:question_bank_builder' bank.pk %}{% if request.GET.q %}?q={{ request.GET.q }}{% endif %}"
+       class="qb-tab {% if qb_tab == 'builder' %}active{% endif %}"
+       {% if qb_tab == 'builder' %}aria-current="page"{% endif %}>Builder</a>
+    <a href="{% url 'exams:question_bank_import' bank.pk %}"
+       class="qb-tab {% if qb_tab == 'import' %}active{% endif %}"
+       {% if qb_tab == 'import' %}aria-current="page"{% endif %}>Bulk Import</a>
+    <a href="{% url 'exams:question_bank_library' bank.pk %}"
+       class="qb-tab {% if qb_tab == 'library' %}active{% endif %}"
+       {% if qb_tab == 'library' %}aria-current="page"{% endif %}>Question Library</a>
+    {% else %}
+    <span class="qb-tab active">Setup</span>
+    <span class="qb-tab is-disabled">Builder</span>
+    <span class="qb-tab is-disabled">Bulk Import</span>
+    <span class="qb-tab is-disabled">Question Library</span>
+    {% endif %}
+</nav>

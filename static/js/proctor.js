@@ -181,7 +181,7 @@
         }
     }
 
-    let idVerified = INITIAL_ID_STATUS === "passed";
+    let idVerified = INITIAL_ID_STATUS === "passed" || INITIAL_ID_STATUS === "unverified";
     let idVerifyResolve = null;
     let idVerifyReject = null;
     const idVerifyReady = new Promise((resolve, reject) => {
@@ -190,7 +190,7 @@
         if (idVerified) resolve();
     });
 
-    function markIdPassed() {
+    function markIdPassed(badgeText) {
         if (idVerified) return;
         idVerified = true;
         // Hold the "verifying" state on screen briefly so the student sees the
@@ -200,7 +200,7 @@
         setTimeout(() => {
             examApp.dataset.pendingId = "false";
             setFaceStatus("passed");
-            setIdCheckState("passed", "IDENTITY CONFIRMED");
+            setIdCheckState("passed", badgeText || "IDENTITY CONFIRMED");
             document.dispatchEvent(new CustomEvent("id-verification:passed"));
             if (idVerifyResolve) {
                 idVerifyResolve();
@@ -321,14 +321,49 @@
         }
     }
 
-    function offerIdRetry() {
+    // Why a round did not confirm the student. Only "no_match" is a verdict on
+    // the person in front of the camera; the others are the check itself not
+    // happening, so they are worded (and retried) differently.
+    const ID_RETRY_COPY = {
+        no_match: {
+            badge: "FACE NOT RECOGNIZED",
+            text: "We could not match your face. Face the camera in good lighting, then retry.",
+        },
+        no_face: {
+            badge: "NO FACE DETECTED",
+            text: "We can't see your face. Move into the frame, remove hats or masks, and make sure the room is lit.",
+        },
+        unavailable: {
+            badge: "CHECK UNAVAILABLE",
+            text: "The identity check is temporarily unavailable. Trying again…",
+        },
+    };
+
+    function offerIdRetry(reason) {
+        const copy = ID_RETRY_COPY[reason] || ID_RETRY_COPY.no_match;
         setFaceStatus("pending");
-        setIdCheckState("failed", "FACE NOT RECOGNIZED");
-        setIdStatusText(
-            "We could not match your face. Face the camera in good lighting, then retry."
-        );
+        setIdCheckState("failed", copy.badge);
+        setIdStatusText(copy.text);
         showIdCheckAction("retry");
         document.dispatchEvent(new CustomEvent("id-verification:retry-available"));
+    }
+
+    function announceAutoRetry(reason) {
+        const copy = ID_RETRY_COPY[reason] || ID_RETRY_COPY.unavailable;
+        setFaceStatus("pending");
+        setIdCheckState("verifying", copy.badge);
+        setIdStatusText(copy.text);
+        hideIdCheckActions();
+    }
+
+    // Admitted without a face match because the system could not perform one.
+    // The exam proceeds — the session is flagged for staff review server-side.
+    function markIdUnverified() {
+        hideIdCheckActions();
+        setIdStatusText(
+            "We could not complete the face check. You may start the exam; this session is flagged for review."
+        );
+        markIdPassed("IDENTITY NOT CONFIRMED");
     }
 
     function offerIdGoBack() {
@@ -457,6 +492,7 @@
     }
 
     let idVerifySubmitting = false;
+    let idRoundActive = false;
     let idVerifyPollTimer = null;
 
     function needsIdVerification(status) {
@@ -475,10 +511,14 @@
         }
     }
 
-    function handleIdVerificationResolved(status) {
+    function handleIdVerificationResolved(status, reason) {
         if (status === "passed") {
             hideIdCheckActions();
             markIdPassed();
+            return true;
+        }
+        if (status === "unverified") {
+            markIdUnverified();
             return true;
         }
         if (status === "failed") {
@@ -486,16 +526,32 @@
             return true;
         }
         if (status === "retry") {
-            offerIdRetry();
+            offerIdRetry(reason);
             return true;
         }
         return false;
     }
 
+    // A one-off, higher-quality still than the proctoring loop uses: this is
+    // the frame the face embedding is built from.
+    function captureIdFrame() {
+        const video =
+            document.getElementById("id-check-video") ||
+            document.getElementById("webcam-exam");
+        if (!video || !video.videoWidth) return null;
+        const canvas = document.createElement("canvas");
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext("2d").drawImage(video, 0, 0);
+        return canvas.toDataURL("image/jpeg", 0.92);
+    }
+
     async function submitIdVerifyFrame() {
         if (!ID_VERIFY_URL || idVerifySubmitting) return null;
-        const frame = captureFrame();
-        if (!frame) return null;
+        await waitForVideoReady(8000);
+        const frame = captureIdFrame();
+        // No usable frame is a camera problem, not a failed identity check.
+        if (!frame) return { id_verification_status: "retry", id_verification_reason: "no_face" };
         idVerifySubmitting = true;
         try {
             const res = await fetch(ID_VERIFY_URL, {
@@ -509,10 +565,17 @@
                     frame_base64: frame,
                 }),
             });
-            if (!res.ok) return null;
-            return await res.json().catch(() => ({}));
+            const payload = await res.json().catch(() => ({}));
+            if (res.ok) return payload;
+            // A rejected frame (400) or transport error still leaves the
+            // student unverified — retry rather than stalling on the spinner.
+            if (payload.id_verification_status) return payload;
+            return {
+                id_verification_status: "retry",
+                id_verification_reason: res.status === 400 ? "no_face" : "unavailable",
+            };
         } catch (err) {
-            return null;
+            return { id_verification_status: "retry", id_verification_reason: "unavailable" };
         } finally {
             idVerifySubmitting = false;
         }
@@ -524,7 +587,12 @@
             const data = await fetchSessionStatus();
             if (!data) return;
             if (data.id_verification_status) {
-                if (handleIdVerificationResolved(data.id_verification_status)) {
+                if (
+                    handleIdVerificationResolved(
+                        data.id_verification_status,
+                        data.id_verification_reason
+                    )
+                ) {
                     clearInterval(idVerifyPollTimer);
                     idVerifyPollTimer = null;
                 }
@@ -538,47 +606,68 @@
         idVerifyPollTimer = null;
     }
 
+    const RESOLVED_ID_STATUSES = new Set(["passed", "failed", "retry", "unverified"]);
+    // Faults (camera showed no face, model unreachable) are retried for the
+    // student automatically; only a real mismatch needs a decision from them.
+    const AUTO_RETRY_REASONS = new Set(["no_face", "unavailable"]);
+    const MAX_AUTO_ID_RETRIES = 3;
+    const AUTO_RETRY_DELAY_MS = 1800;
+
     async function waitForIdVerifyOutcome(timeoutMs = 20000) {
         const start = Date.now();
         while (Date.now() - start < timeoutMs) {
             const data = await fetchSessionStatus();
-            if (data && data.id_verification_status) {
-                const status = (data.id_verification_status || "").toLowerCase();
-                if (status === "passed" || status === "failed" || status === "retry") {
-                    return status;
-                }
+            const status = (data?.id_verification_status || "").toLowerCase();
+            if (RESOLVED_ID_STATUSES.has(status)) {
+                return { status, reason: data.id_verification_reason };
             }
             await new Promise((r) => setTimeout(r, 800));
         }
         return null;
     }
 
-    async function runSingleIdVerifyRound() {
+    async function runSingleIdVerifyRound(autoRetriesLeft = MAX_AUTO_ID_RETRIES) {
+        idRoundActive = true;
+        try {
+            return await idVerifyRound(autoRetriesLeft);
+        } finally {
+            idRoundActive = false;
+        }
+    }
+
+    async function idVerifyRound(autoRetriesLeft) {
         hideIdCheckActions();
         setFaceStatus("pending");
         setIdCheckState("verifying", "VERIFYING YOUR IDENTITY…");
         setIdStatusText("Checking your face against your registration scan…");
 
+        let outcome = null;
         const result = await submitIdVerifyFrame();
-        if (result && result.id_verification_status) {
-            const status = (result.id_verification_status || "").toLowerCase();
-            if (status === "passed" || status === "failed" || status === "retry") {
-                handleIdVerificationResolved(status);
-                return status;
-            }
+        const submitted = (result?.id_verification_status || "").toLowerCase();
+        if (RESOLVED_ID_STATUSES.has(submitted)) {
+            outcome = { status: submitted, reason: result.id_verification_reason };
+        } else {
+            // Queued worker path (or empty eager response): poll for a decision.
+            startIdVerificationPolling();
+            outcome = await waitForIdVerifyOutcome();
+            stopIdVerificationPolling();
         }
 
-        // Queued worker path (or empty eager response): poll until a decision.
-        startIdVerificationPolling();
-        const status = await waitForIdVerifyOutcome();
-        stopIdVerificationPolling();
-        if (status) {
-            handleIdVerificationResolved(status);
-            return status;
+        // No answer at all within the window — the server never got to decide.
+        if (!outcome) outcome = { status: "retry", reason: "unavailable" };
+
+        if (
+            outcome.status === "retry" &&
+            AUTO_RETRY_REASONS.has(outcome.reason) &&
+            autoRetriesLeft > 0
+        ) {
+            announceAutoRetry(outcome.reason);
+            await new Promise((r) => setTimeout(r, AUTO_RETRY_DELAY_MS));
+            return idVerifyRound(autoRetriesLeft - 1);
         }
-        // Timed out without a status — treat as a retry opportunity if still pending.
-        offerIdRetry();
-        return "retry";
+
+        handleIdVerificationResolved(outcome.status, outcome.reason);
+        return outcome.status;
     }
 
     async function runIdVerification() {
@@ -588,16 +677,16 @@
         }
 
         const initial = await fetchSessionStatus();
-        if (initial && initial.id_verification_status) {
-            const status = (initial.id_verification_status || "").toLowerCase();
-            if (status === "passed" || status === "failed") {
-                handleIdVerificationResolved(status);
-                return;
-            }
-            if (status === "retry") {
-                offerIdRetry();
-                return;
-            }
+        const status = (initial?.id_verification_status || "").toLowerCase();
+        if (status === "passed" || status === "failed" || status === "unverified") {
+            handleIdVerificationResolved(status, initial.id_verification_reason);
+            return;
+        }
+        // A mismatch is already on record: a reload must not silently spend the
+        // student's last attempt, so wait for them to press Retry.
+        if (status === "retry" && initial.id_verification_reason === "no_match") {
+            offerIdRetry("no_match");
+            return;
         }
 
         await runSingleIdVerifyRound();
@@ -622,11 +711,10 @@
     function handleWsEvent(data) {
         if (data.type === "id_status") {
             const status = data.status;
-            if (status === "retry") {
-                offerIdRetry();
-                return;
-            }
-            if (!handleIdVerificationResolved(status)) {
+            // A round is already driving the UI (and will auto-retry faults);
+            // let it finish rather than racing it with a duplicate handler.
+            if (status === "retry" && idRoundActive) return;
+            if (!handleIdVerificationResolved(status, data.reason)) {
                 setFaceStatus(status === "passed" ? "passed" : status === "failed" ? "failed" : "pending");
             }
             return;
@@ -747,11 +835,12 @@
                 lastServerSync = Date.now();
             }
             if (data.id_verification_status) {
-                if (data.id_verification_status === "passed") {
+                const idStatus = data.id_verification_status;
+                if (idStatus === "passed" || idStatus === "unverified") {
                     if (!idVerified) markIdPassed();
                     else setFaceStatus("passed");
                 } else {
-                    setFaceStatus(data.id_verification_status);
+                    setFaceStatus(idStatus);
                 }
             }
             if (data.max_strikes != null) {
@@ -879,7 +968,13 @@
     const examForm = document.getElementById("exam-form");
     if (examForm) {
         examForm.addEventListener("submit", () => {
-            scrubExamPaper();
+            // Scrub only AFTER the browser has serialized the form for the
+            // POST. Disabling inputs synchronously here excluded every field
+            // — including the hidden CSRF token — from the submission, so the
+            // server rejected it with "CSRF token missing" and the attempt
+            // stayed in progress. Form data is captured synchronously right
+            // after this handler returns, so a 0ms defer is safe.
+            setTimeout(scrubExamPaper, 0);
             const url = examApp.dataset.resultUrl;
             if (url) {
                 try {
